@@ -6,7 +6,7 @@ from pathlib import Path
 from PIL import Image
 from transformers import AutoProcessor, AutoModelForCausalLM
 from tqdm import tqdm
-from config import IMAGE_DIR, IMAGE_EXTENSIONS, FILTER_MODEL_ID
+from config import IMAGE_DIR, IMAGE_EXTENSIONS, FILTER_MODEL_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -59,16 +59,16 @@ class ImageFilter:
         self.unsafe_unusable_dir.mkdir(parents=True, exist_ok=True)
 
     def load_model(self):
-        logger.info(f"Loading model: {FILTER_MODEL_ID}")
+        logger.info(f"Loading model: {FILTER_MODEL_PATH}")
         self.model = AutoModelForCausalLM.from_pretrained(
-            FILTER_MODEL_ID,
+            FILTER_MODEL_PATH,
             torch_dtype=torch.bfloat16,
             device_map="auto",
             trust_remote_code=True,
             local_files_only=True
         )
         self.processor = AutoProcessor.from_pretrained(
-            FILTER_MODEL_ID, trust_remote_code=True, local_files_only=True
+            FILTER_MODEL_PATH, trust_remote_code=True, local_files_only=True
         )
 
     def is_valid_image(self, path):

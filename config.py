@@ -32,5 +32,5 @@ ILBE_BASE_URL = "https://www.ilbe.com"
 ILBE_LIST_URL = "https://www.ilbe.com/list/ilbe"
 
 # VLM Model for filtering
-FILTER_MODEL_ID = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+FILTER_MODEL_PATH = "./model_cache/Qwen3-VL-30B-A3B-Instruct"  # local path
 
