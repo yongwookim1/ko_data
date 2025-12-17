@@ -4,9 +4,15 @@ import torch
 import logging
 from pathlib import Path
 from PIL import Image
-from transformers import AutoProcessor, AutoModelForCausalLM
+from transformers import AutoProcessor, AutoModel
 from tqdm import tqdm
 from config import IMAGE_DIR, IMAGE_EXTENSIONS, FILTER_MODEL_PATH
+
+try:
+    from transformers import Qwen3VLMoeForConditionalGeneration
+    QWEN3_AVAILABLE = True
+except ImportError:
+    QWEN3_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -63,12 +69,22 @@ class ImageFilter:
         if not model_path.exists():
             raise FileNotFoundError(f"Model not found at: {FILTER_MODEL_PATH}")
         logger.info(f"Loading model: {FILTER_MODEL_PATH}")
-        self.model = AutoModelForCausalLM.from_pretrained(
-            FILTER_MODEL_PATH,
-            torch_dtype=torch.bfloat16,
-            device_map="auto",
-            trust_remote_code=True
-        )
+        
+        is_qwen3 = "qwen3" in FILTER_MODEL_PATH.lower()
+        if is_qwen3 and QWEN3_AVAILABLE:
+            self.model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
+                FILTER_MODEL_PATH,
+                torch_dtype=torch.bfloat16,
+                device_map="auto",
+                trust_remote_code=True
+            )
+        else:
+            self.model = AutoModel.from_pretrained(
+                FILTER_MODEL_PATH,
+                torch_dtype=torch.bfloat16,
+                device_map="auto",
+                trust_remote_code=True
+            )
         self.processor = AutoProcessor.from_pretrained(
             FILTER_MODEL_PATH, trust_remote_code=True
         )
