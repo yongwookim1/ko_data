@@ -34,3 +34,6 @@ ILBE_LIST_URL = "https://www.ilbe.com/list/ilbe"
 # VLM Model for filtering
 FILTER_MODEL_PATH = str((BASE_DIR / "models_cache" / "Qwen3-VL-30B-A3B-Instruct").resolve())
 
+# Judge Model for safety evaluation
+JUDGE_MODEL_PATH = "/home/work/MLLM_Safety/ko_data/models_cache/Qwen3-30B-A3B-Instruct-2507"
+
