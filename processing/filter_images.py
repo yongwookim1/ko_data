@@ -59,16 +59,18 @@ class ImageFilter:
         self.unsafe_unusable_dir.mkdir(parents=True, exist_ok=True)
 
     def load_model(self):
+        model_path = Path(FILTER_MODEL_PATH)
+        if not model_path.exists():
+            raise FileNotFoundError(f"Model not found at: {FILTER_MODEL_PATH}")
         logger.info(f"Loading model: {FILTER_MODEL_PATH}")
         self.model = AutoModelForCausalLM.from_pretrained(
             FILTER_MODEL_PATH,
             torch_dtype=torch.bfloat16,
             device_map="auto",
-            trust_remote_code=True,
-            local_files_only=True
+            trust_remote_code=True
         )
         self.processor = AutoProcessor.from_pretrained(
-            FILTER_MODEL_PATH, trust_remote_code=True, local_files_only=True
+            FILTER_MODEL_PATH, trust_remote_code=True
         )
 
     def is_valid_image(self, path):
