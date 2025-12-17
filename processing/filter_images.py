@@ -4,7 +4,7 @@ import torch
 import logging
 from pathlib import Path
 from PIL import Image
-from transformers import AutoProcessor, AutoModelForVision2Seq
+from transformers import AutoProcessor, AutoModelForCausalLM
 from tqdm import tqdm
 from config import IMAGE_DIR, IMAGE_EXTENSIONS, FILTER_MODEL_ID
 
@@ -60,7 +60,7 @@ class ImageFilter:
 
     def load_model(self):
         logger.info(f"Loading model: {FILTER_MODEL_ID}")
-        self.model = AutoModelForVision2Seq.from_pretrained(
+        self.model = AutoModelForCausalLM.from_pretrained(
             FILTER_MODEL_ID,
             torch_dtype=torch.bfloat16,
             device_map="auto",
