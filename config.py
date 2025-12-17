@@ -32,5 +32,5 @@ ILBE_BASE_URL = "https://www.ilbe.com"
 ILBE_LIST_URL = "https://www.ilbe.com/list/ilbe"
 
 # VLM Model for filtering
-FILTER_MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
+FILTER_MODEL_ID = "Qwen/Qwen2-VL-7B-Instruct"
 

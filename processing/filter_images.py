@@ -4,7 +4,7 @@ import torch
 import logging
 from pathlib import Path
 from PIL import Image
-from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
+from transformers import AutoProcessor, AutoModelForVision2Seq
 from tqdm import tqdm
 from config import IMAGE_DIR, IMAGE_EXTENSIONS, FILTER_MODEL_ID
 
@@ -60,22 +60,12 @@ class ImageFilter:
 
     def load_model(self):
         logger.info(f"Loading model: {FILTER_MODEL_ID}")
-        try:
-            self.model = Qwen3VLForConditionalGeneration.from_pretrained(
-                FILTER_MODEL_ID,
-                torch_dtype=torch.bfloat16,
-                device_map="cuda:0",
-                trust_remote_code=True
-            )
-        except (ImportError, Exception):
-            logger.warning("Qwen3VLForConditionalGeneration not found. Trying AutoModel...")
-            from transformers import AutoModel
-            self.model = AutoModel.from_pretrained(
-                FILTER_MODEL_ID,
-                torch_dtype=torch.bfloat16,
-                device_map="auto",
-                trust_remote_code=True
-            )
+        self.model = AutoModelForVision2Seq.from_pretrained(
+            FILTER_MODEL_ID,
+            torch_dtype=torch.bfloat16,
+            device_map="auto",
+            trust_remote_code=True
+        )
         self.processor = AutoProcessor.from_pretrained(FILTER_MODEL_ID, trust_remote_code=True)
 
     def is_valid_image(self, path):
@@ -97,11 +87,15 @@ class ImageFilter:
             return self.processor.batch_decode(trimmed, skip_special_tokens=True)[0]
 
     def parse_json(self, text):
-        if "```json" in text:
-            text = text.split("```json")[1].split("```")[0]
-        elif "```" in text:
-            text = text.split("```")[1].split("```")[0]
-        return json.loads(text.strip())
+        try:
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0]
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0]
+            return json.loads(text.strip())
+        except (json.JSONDecodeError, IndexError) as e:
+            logger.warning(f"JSON parse failed: {e}, raw: {text[:200]}")
+            return {"assessment": "safe"}
 
     def run(self):
         self.setup()
