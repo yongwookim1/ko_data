@@ -64,9 +64,12 @@ class ImageFilter:
             FILTER_MODEL_ID,
             torch_dtype=torch.bfloat16,
             device_map="auto",
-            trust_remote_code=True
+            trust_remote_code=True,
+            local_files_only=True
         )
-        self.processor = AutoProcessor.from_pretrained(FILTER_MODEL_ID, trust_remote_code=True)
+        self.processor = AutoProcessor.from_pretrained(
+            FILTER_MODEL_ID, trust_remote_code=True, local_files_only=True
+        )
 
     def is_valid_image(self, path):
         try:
