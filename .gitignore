@@ -1,0 +1,50 @@
+# Custom
+images/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Images and data
+images/
+data/
+*.jsonl
+*.json
+!config.py
+
+# Selenium/ChromeDriver
+downloaded_files/
+*.lock
+chromedriver*
+geckodriver*
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model cache
+.cache/
+*.pt
+*.pth
+*.bin
+
