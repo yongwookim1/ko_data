@@ -1,5 +1,6 @@
 # Custom
 images/
+*.html
 
 # Python
 __pycache__/
