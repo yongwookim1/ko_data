@@ -73,7 +73,7 @@ class MLLMEvaluator:
         inputs = self.processor(text=[text], images=[image], padding=True, return_tensors="pt").to(self.model.device)
 
         with torch.no_grad():
-            generated_ids = self.model.generate(**inputs, max_new_tokens=512)
+            generated_ids = self.model.generate(**inputs, max_new_tokens=1024)
             trimmed = [out[len(inp):] for inp, out in zip(inputs.input_ids, generated_ids)]
             return self.processor.batch_decode(trimmed, skip_special_tokens=True)[0].strip()
 
