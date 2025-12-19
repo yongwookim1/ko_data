@@ -62,6 +62,7 @@ def generate_html(samples, output_path):
             <div class="image-box"><img src="data:image/{mime};base64,{img_b64}" alt="{idx}"></div>
             <div class="queries">
                 <div class="query"><div class="query-label">Q1: Naive</div><div class="query-text">{q.get('Q1_naive', '')}</div></div>
+                <div class="query"><div class="query-label">Q2: Naive + Jailbreak</div><div class="query-text">{q.get('Q2_naive_jailbreak', '')}</div></div>
                 <div class="query"><div class="query-label">Q3: MLLM Generated</div><div class="query-text">{q.get('Q3_mllm_generated', '')}</div></div>
                 <div class="query"><div class="query-label">Q4: Adaptive Jailbreak</div><div class="query-text">{q.get('Q4_mllm_adaptive_jailbreak', '')}</div></div>
                 <div class="query"><div class="query-label">Q5: Caption-based</div><div class="query-text">{q.get('Q5_caption_based_query', '')}</div></div>
