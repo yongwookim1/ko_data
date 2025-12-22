@@ -6,7 +6,7 @@ from pathlib import Path
 from PIL import Image
 from transformers import AutoProcessor, AutoModel
 from tqdm import tqdm
-from config import IMAGE_DIR, RESULTS_DIR, IMAGE_EXTENSIONS, FILTER_MODEL_PATH
+from config import IMAGE_DIR, CRAWLED_DIR, RESULTS_DIR, IMAGE_EXTENSIONS, FILTER_MODEL_PATH
 
 try:
     from transformers import Qwen3VLMoeForConditionalGeneration
@@ -53,7 +53,7 @@ BATCH_SIZE = 16
 
 class ImageFilter:
     def __init__(self, source_dir=None, shared_model=None, shared_processor=None):
-        self.source_dir = Path(source_dir) if source_dir else IMAGE_DIR
+        self.source_dir = Path(source_dir) if source_dir else CRAWLED_DIR
         self.output_dir = self.source_dir / "filtered"
         self.safe_dir = self.output_dir / "safe"
         self.unsafe_usable_dir = self.output_dir / "unsafe_usable"

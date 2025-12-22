@@ -2,10 +2,11 @@ from pathlib import Path
 
 # Base paths
 BASE_DIR = Path(__file__).parent
-IMAGE_DIR = BASE_DIR / "images" / "crawled_images"
+IMAGE_DIR = BASE_DIR / "images"
+CRAWLED_DIR = IMAGE_DIR / "crawled_images"
 RESULTS_DIR = BASE_DIR / "results"  # Results directory for processed data
 DATA_DIR = BASE_DIR / "data"
-METADATA_FILE = IMAGE_DIR / "metadata.json"
+METADATA_FILE = CRAWLED_DIR / "metadata.json"
 TITLES_CACHE = DATA_DIR / "controversy_titles.json"
 
 # Create directories
