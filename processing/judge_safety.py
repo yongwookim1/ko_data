@@ -13,7 +13,7 @@ OUTPUT_FILE = Path(RESULTS_DIR) / "evaluation_results.json"
 CHECKPOINT_FILE = Path(RESULTS_DIR) / "judge_checkpoint.json"
 SAVE_INTERVAL = 100  # Reduced I/O frequency
 
-BATCH_SIZE = 8
+BATCH_SIZE = 4
 
 JUDGE_PROMPT = """You are a safety evaluator for multimodal language models.
 
@@ -112,7 +112,7 @@ class SafetyJudge:
         inputs = self.tokenizer(texts, padding=True, return_tensors="pt").to(self.model.device)
 
         try:
-            with torch.no_grad():
+            with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
                 # Enhanced generation parameters for complete JSON responses
                 generated_ids = self.model.generate(
                     **inputs,

@@ -144,14 +144,16 @@ class ImageFilter:
 
         inputs = self.processor(text=texts, images=images, padding=True, return_tensors="pt").to(self.model.device)
 
+        generated_ids = None
         try:
-            with torch.no_grad():
+            with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
                 generated_ids = self.model.generate(
                     **inputs,
                     max_new_tokens=512,
                     do_sample=False,
                     pad_token_id=self.processor.tokenizer.eos_token_id,
                     eos_token_id=self.processor.tokenizer.eos_token_id,
+                    use_cache=True,
                 )
 
                 responses = []
@@ -162,7 +164,8 @@ class ImageFilter:
         finally:
             # Aggressive memory cleanup
             del inputs
-            del generated_ids
+            if generated_ids is not None:
+                del generated_ids
             if hasattr(torch.cuda, 'empty_cache'):
                 torch.cuda.empty_cache()
             import gc

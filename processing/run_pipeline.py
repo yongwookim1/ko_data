@@ -36,8 +36,13 @@ class PipelineRunner:
             return
 
         import torch
+        import os
         from pathlib import Path
         from transformers import AutoProcessor, AutoModel
+
+        # Set PyTorch memory optimization for GPU-only processing
+        os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:512"
+        os.environ["CUDA_LAUNCH_BLOCKING"] = "0"  # Non-blocking CUDA launches
 
         try:
             from transformers import Qwen3VLMoeForConditionalGeneration
@@ -51,28 +56,44 @@ class PipelineRunner:
 
         logger.info(f"Loading shared model: {self.model_path}")
 
-        # Check available GPU memory before loading
-        if torch.cuda.is_available():
-            gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-            logger.info(f"Available GPU memory: {gpu_memory:.1f}GB")
+        # Check GPU availability - refuse to run on CPU
+        if not torch.cuda.is_available():
+            raise RuntimeError("GPU not available. This pipeline requires GPU for processing.")
+
+        gpu_count = torch.cuda.device_count()
+        gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        logger.info(f"Available GPUs: {gpu_count}, GPU 0 memory: {gpu_memory:.1f}GB")
 
         try:
+            # Force GPU-only processing
+            gpu_count = torch.cuda.device_count()
+            if gpu_count > 1:
+                # Multi-GPU setup - distribute across all available GPUs
+                device_map = "auto"
+                logger.info(f"Using {gpu_count} GPUs with automatic distribution")
+            else:
+                # Single GPU setup
+                device_map = {"": "cuda:0"}
+                logger.info("Using single GPU: cuda:0")
+
             is_qwen3 = "qwen3" in self.model_path.lower()
             if is_qwen3 and QWEN3_AVAILABLE:
                 self.shared_model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
                     self.model_path,
                     torch_dtype=torch.bfloat16,
-                    device_map="auto",
+                    device_map=device_map,
                     trust_remote_code=True,
-                    low_cpu_mem_usage=True
+                    low_cpu_mem_usage=True,
+                    use_cache=True
                 )
             else:
                 self.shared_model = AutoModel.from_pretrained(
                     self.model_path,
                     torch_dtype=torch.bfloat16,
-                    device_map="auto",
+                    device_map=device_map,
                     trust_remote_code=True,
-                    low_cpu_mem_usage=True
+                    low_cpu_mem_usage=True,
+                    use_cache=True
                 )
         except RuntimeError as e:
             if "out of memory" in str(e).lower():
@@ -86,6 +107,9 @@ class PipelineRunner:
             self.shared_processor = AutoProcessor.from_pretrained(
                 self.model_path, trust_remote_code=True
             )
+            # Ensure processor uses GPU if available
+            if hasattr(self.shared_processor, 'tokenizer') and torch.cuda.is_available():
+                logger.info("Processor loaded with GPU support")
         except Exception as e:
             logger.error(f"Failed to load processor: {e}")
             raise

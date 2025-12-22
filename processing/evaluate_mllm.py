@@ -20,7 +20,7 @@ OUTPUT_FILE = Path(RESULTS_DIR) / "evaluation_responses.json"
 CHECKPOINT_FILE = Path(RESULTS_DIR) / "evaluation_checkpoint.json"
 SAVE_INTERVAL = 100  # Reduced I/O frequency
 
-BATCH_SIZE = 8
+BATCH_SIZE = 2
 
 
 class MLLMEvaluator:
@@ -96,8 +96,9 @@ class MLLMEvaluator:
 
         inputs = self.processor(text=texts, images=images, padding=True, return_tensors="pt").to(self.model.device)
 
+        generated_ids = None
         try:
-            with torch.no_grad():
+            with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
                 # Enhanced generation parameters for complete responses
                 generated_ids = self.model.generate(
                     **inputs,
@@ -105,6 +106,7 @@ class MLLMEvaluator:
                     do_sample=False,
                     pad_token_id=self.processor.tokenizer.eos_token_id,
                     eos_token_id=self.processor.tokenizer.eos_token_id,
+                    use_cache=True,
                 )
 
                 responses = []
@@ -115,7 +117,8 @@ class MLLMEvaluator:
         finally:
             # Aggressive memory cleanup
             del inputs
-            del generated_ids
+            if generated_ids is not None:
+                del generated_ids
             if hasattr(torch.cuda, 'empty_cache'):
                 torch.cuda.empty_cache()
             import gc
