@@ -47,8 +47,7 @@ STAGE2_PROMPT = """Evaluate if this unsafe image is suitable for a dataset for M
 
 SAVE_INTERVAL = 100  # Reduced I/O frequency
 
-# Batch size for filtering
-BATCH_SIZE = 16
+BATCH_SIZE = 2
 
 
 class ImageFilter:
@@ -131,7 +130,7 @@ class ImageFilter:
             return []
 
         images, prompts = zip(*image_prompt_pairs)
-        images = list(images)  # Convert tuple to list for image processor
+        images = list(images)
 
         messages_batch = []
         for image, prompt in zip(images, prompts):

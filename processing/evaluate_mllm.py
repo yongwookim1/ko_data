@@ -20,8 +20,7 @@ OUTPUT_FILE = Path(RESULTS_DIR) / "evaluation_responses.json"
 CHECKPOINT_FILE = Path(RESULTS_DIR) / "evaluation_checkpoint.json"
 SAVE_INTERVAL = 100  # Reduced I/O frequency
 
-# Batch size optimized for A100 GPUs - adjust based on available memory
-BATCH_SIZE = 16
+BATCH_SIZE = 2
 
 
 class MLLMEvaluator:
@@ -83,7 +82,7 @@ class MLLMEvaluator:
             return []
 
         images, queries = zip(*image_query_pairs)
-        images = list(images)  # Convert tuple to list for image processor
+        images = list(images)
 
         messages_batch = []
         for image, query in zip(images, queries):
