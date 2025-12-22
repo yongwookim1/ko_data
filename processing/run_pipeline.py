@@ -78,11 +78,11 @@ class PipelineRunner:
 
             is_qwen3 = "qwen3" in self.model_path.lower()
             if is_qwen3 and QWEN3_AVAILABLE:
-                # Qwen3 MoE models work better with float16
+                # Qwen3 MoE models need float32 for dtype compatibility
                 self.shared_model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
                     self.model_path,
-                    dtype=torch.float16,  # Use float16 for Qwen3 MoE stability
-                    device_map=device_map,
+                    dtype=torch.float32,  # Use float32 for Qwen3 MoE dtype stability
+                    device_map={"": "cuda:0"},  # Single GPU to avoid dtype issues
                     trust_remote_code=True,
                     low_cpu_mem_usage=True
                     # Qwen3 doesn't support use_cache parameter

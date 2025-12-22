@@ -98,11 +98,17 @@ class MLLMEvaluator:
 
         generated_ids = None
         try:
-            # Use different autocast dtype based on model type
+            # Qwen3 MoE models need full precision, disable autocast
             is_qwen3 = hasattr(self.model, 'config') and "qwen3" in str(self.model.config.__class__).lower()
-            autocast_dtype = torch.float16 if is_qwen3 else torch.bfloat16
 
-            with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=autocast_dtype):
+            if is_qwen3:
+                # Qwen3: Use full precision without autocast
+                inference_context = torch.no_grad()
+            else:
+                # Other models: Use autocast for efficiency
+                inference_context = torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16) if torch.cuda.is_available() else torch.no_grad()
+
+            with torch.no_grad(), inference_context:
                 # Enhanced generation parameters for complete responses
                 generate_kwargs = {
                     "max_new_tokens": 2048,
