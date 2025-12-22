@@ -194,8 +194,8 @@ class PipelineRunner:
 
             logger.info(f"✅ Completed: {stage_name}\n")
 
-            # Unload shared model after stages that use it to free GPU memory for judge stage
-            if stage_id in ["filter", "queries", "evaluate"]:
+            # 수정: evaluate 단계가 끝난 후에만 공유 모델 언로드 (filter, queries 단계에서는 유지)
+            if stage_id == "evaluate":
                 self.unload_shared_model()
 
             return True
