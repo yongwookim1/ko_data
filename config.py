@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 # Base paths
@@ -34,9 +35,9 @@ DC_BASE_URL = "https://www.dcinside.com/"
 ILBE_BASE_URL = "https://www.ilbe.com"
 ILBE_LIST_URL = "https://www.ilbe.com/list/ilbe"
 
-# VLM Model for filtering
+# VLM Model for filtering - Use local path (required for offline operation)
 FILTER_MODEL_PATH = str((BASE_DIR / "models_cache" / "Qwen3-VL-30B-A3B-Instruct").resolve())
 
-# Judge Model for safety evaluation
+# Judge Model for safety evaluation - Use local path (required for offline operation)
 JUDGE_MODEL_PATH = str((BASE_DIR / "models_cache" / "Qwen3-30B-A3B-Instruct-2507").resolve())
 

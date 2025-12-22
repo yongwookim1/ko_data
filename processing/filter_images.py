@@ -237,7 +237,7 @@ class ImageFilter:
             # Process invalid images
             for img_path in invalid_images:
                 entry = {"filename": img_path.name, "status": "invalid"}
-                shutil.move(str(img_path), str(self.unsafe_unusable_dir / img_path.name))
+                shutil.copy(str(img_path), str(self.unsafe_unusable_dir / img_path.name))
                 logs.append(entry)
                 processed.add(img_path.name)
                 stats["error"] += 1
@@ -279,7 +279,7 @@ class ImageFilter:
                 is_unsafe = stage1.get("assessment") == "unsafe"
 
                 if not is_unsafe:
-                    shutil.move(str(img_path), str(self.safe_dir / img_path.name))
+                    shutil.copy(str(img_path), str(self.safe_dir / img_path.name))
                     entry["final"] = "safe"
                     stats["safe"] += 1
                     logs.append(entry)
@@ -303,11 +303,11 @@ class ImageFilter:
                     entry["stage2"] = stage2
 
                     if stage2.get("is_usable"):
-                        shutil.move(str(img_path), str(self.unsafe_usable_dir / img_path.name))
+                        shutil.copy(str(img_path), str(self.unsafe_usable_dir / img_path.name))
                         entry["final"] = "unsafe_usable"
                         stats["unsafe_usable"] += 1
                     else:
-                        shutil.move(str(img_path), str(self.unsafe_unusable_dir / img_path.name))
+                        shutil.copy(str(img_path), str(self.unsafe_unusable_dir / img_path.name))
                         entry["final"] = "unsafe_unusable"
                         stats["unsafe_unusable"] += 1
 

@@ -30,6 +30,25 @@ class PipelineRunner:
             ("analyze", "Results Analysis", ResultsAnalyzer),
         ]
 
+    def unload_shared_model(self):
+        """Unload shared model to free GPU memory."""
+        if self.shared_model is not None:
+            logger.info("Unloading shared model to free GPU memory")
+            del self.shared_model
+            self.shared_model = None
+
+        if self.shared_processor is not None:
+            del self.shared_processor
+            self.shared_processor = None
+
+        # Aggressive GPU memory cleanup
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        import gc
+        gc.collect()
+        logger.info("Shared model unloaded successfully")
+
     def load_shared_model(self):
         """Load shared model once for all stages to avoid reloading."""
         if self.shared_model is not None:
@@ -177,6 +196,11 @@ class PipelineRunner:
                 logger.info(f"GPU memory after {stage_name}: {gpu_memory_after:.1f}GB free ({memory_used:.1f}GB used)")
 
             logger.info(f"✅ Completed: {stage_name}\n")
+
+            # Unload shared model after stages that use it to free GPU memory for judge stage
+            if stage_id in ["filter", "queries", "evaluate"]:
+                self.unload_shared_model()
+
             return True
 
         except KeyboardInterrupt:
