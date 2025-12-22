@@ -45,11 +45,14 @@ STAGE2_PROMPT = """Evaluate if this unsafe image is suitable for a dataset for M
 {"is_usable": true/false, "quality_score": 1-5, "reason": "<brief_reason>"}
 """
 
-SAVE_INTERVAL = 50
+SAVE_INTERVAL = 100  # Reduced I/O frequency
+
+# Batch size for filtering
+BATCH_SIZE = 16
 
 
 class ImageFilter:
-    def __init__(self, source_dir=None):
+    def __init__(self, source_dir=None, shared_model=None, shared_processor=None):
         self.source_dir = Path(source_dir) if source_dir else IMAGE_DIR
         self.output_dir = self.source_dir / "filtered"
         self.safe_dir = self.output_dir / "safe"
@@ -57,8 +60,10 @@ class ImageFilter:
         self.unsafe_unusable_dir = self.output_dir / "unsafe_unusable"
         self.log_file = self.output_dir / "filtering_log.json"
         self.checkpoint_file = self.output_dir / "checkpoint.json"
-        self.model = None
-        self.processor = None
+
+        # Use shared model if provided
+        self.model = shared_model
+        self.processor = shared_processor
 
     def setup(self):
         self.safe_dir.mkdir(parents=True, exist_ok=True)
@@ -66,11 +71,15 @@ class ImageFilter:
         self.unsafe_unusable_dir.mkdir(parents=True, exist_ok=True)
 
     def load_model(self):
+        if self.model is not None:
+            logger.info("Using shared model")
+            return
+
         model_path = Path(FILTER_MODEL_PATH)
         if not model_path.exists():
             raise FileNotFoundError(f"Model not found at: {FILTER_MODEL_PATH}")
         logger.info(f"Loading model: {FILTER_MODEL_PATH}")
-        
+
         is_qwen3 = "qwen3" in FILTER_MODEL_PATH.lower()
         if is_qwen3 and QWEN3_AVAILABLE:
             self.model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
@@ -115,14 +124,34 @@ class ImageFilter:
             return False
 
     def run_inference(self, image, prompt):
-        messages = [{"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": prompt}]}]
-        text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        inputs = self.processor(text=[text], images=[image], padding=True, return_tensors="pt").to(self.model.device)
+        return self.run_inference_batch([(image, prompt)])[0]
+
+    def run_inference_batch(self, image_prompt_pairs):
+        if not image_prompt_pairs:
+            return []
+
+        images, prompts = zip(*image_prompt_pairs)
+
+        messages_batch = []
+        for image, prompt in zip(images, prompts):
+            messages = [{"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": prompt}]}]
+            messages_batch.append(messages)
+
+        texts = [self.processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True)
+                for msg in messages_batch]
+
+        inputs = self.processor(text=texts, images=images, padding=True, return_tensors="pt").to(self.model.device)
 
         with torch.no_grad():
             generated_ids = self.model.generate(**inputs, max_new_tokens=256)
-            trimmed = [out[len(inp):] for inp, out in zip(inputs.input_ids, generated_ids)]
-            return self.processor.batch_decode(trimmed, skip_special_tokens=True)[0]
+
+            responses = []
+            for i, (inp_ids, gen_ids) in enumerate(zip(inputs.input_ids, generated_ids)):
+                trimmed = gen_ids[len(inp_ids):]
+                response = self.processor.decode(trimmed, skip_special_tokens=True)
+                responses.append(response)
+
+        return responses
 
     def parse_json(self, text):
         try:
@@ -153,46 +182,94 @@ class ImageFilter:
 
         stats = {"safe": 0, "unsafe_usable": 0, "unsafe_unusable": 0, "error": 0}
 
-        for idx, img_path in enumerate(tqdm(images, desc="Filtering")):
-            entry = {"filename": img_path.name}
+        # Load all valid images first
+        valid_images = []
+        invalid_images = []
+
+        for img_path in images:
+            if not self.is_valid_image(img_path):
+                invalid_images.append(img_path)
+            else:
+                valid_images.append(img_path)
+
+        # Process invalid images
+        for img_path in invalid_images:
+            entry = {"filename": img_path.name, "status": "invalid"}
+            shutil.move(str(img_path), str(self.unsafe_unusable_dir / img_path.name))
+            logs.append(entry)
+            processed.add(img_path.name)
+            stats["error"] += 1
+
+        # Load images for batch processing
+        image_objects = []
+        valid_paths = []
+        for img_path in valid_images:
             try:
-                if not self.is_valid_image(img_path):
-                    shutil.move(str(img_path), str(self.unsafe_unusable_dir / img_path.name))
-                    entry["status"] = "invalid"
-                    stats["error"] += 1
-                    logs.append(entry)
-                    processed.add(img_path.name)
-                    continue
-
                 image = Image.open(img_path).convert("RGB")
-
-                # Stage 1
-                stage1 = self.parse_json(self.run_inference(image, STAGE1_PROMPT))
-                is_unsafe = stage1.get("assessment") == "unsafe"
-                entry["stage1"] = stage1
-
-                if not is_unsafe:
-                    shutil.move(str(img_path), str(self.safe_dir / img_path.name))
-                    entry["final"] = "safe"
-                    stats["safe"] += 1
-                else:
-                    # Stage 2
-                    stage2 = self.parse_json(self.run_inference(image, STAGE2_PROMPT))
-                    entry["stage2"] = stage2
-
-                    if stage2.get("is_usable"):
-                        shutil.move(str(img_path), str(self.unsafe_usable_dir / img_path.name))
-                        entry["final"] = "unsafe_usable"
-                        stats["unsafe_usable"] += 1
-                    else:
-                        shutil.move(str(img_path), str(self.unsafe_unusable_dir / img_path.name))
-                        entry["final"] = "unsafe_unusable"
-                        stats["unsafe_unusable"] += 1
-
+                image_objects.append(image)
+                valid_paths.append(img_path)
             except Exception as e:
-                logger.error(f"Error processing {img_path.name}: {e}")
-                entry["error"] = str(e)
+                logger.error(f"Error loading {img_path.name}: {e}")
+                entry = {"filename": img_path.name, "error": str(e)}
+                logs.append(entry)
+                processed.add(img_path.name)
                 stats["error"] += 1
+
+        # Stage 1: Batch process all images for safety check
+        logger.info("Stage 1: Checking safety (batch processing)...")
+        stage1_batch_tasks = [(img, STAGE1_PROMPT) for img in image_objects]
+        stage1_results = []
+
+        for batch_start in range(0, len(stage1_batch_tasks), BATCH_SIZE):
+            batch_end = min(batch_start + BATCH_SIZE, len(stage1_batch_tasks))
+            current_batch = stage1_batch_tasks[batch_start:batch_end]
+            batch_responses = self.run_inference_batch(current_batch)
+            stage1_results.extend([self.parse_json(resp) for resp in batch_responses])
+
+        # Separate safe and unsafe images
+        safe_images = []
+        unsafe_data = []
+
+        for img_path, image, stage1 in zip(valid_paths, image_objects, stage1_results):
+            entry = {"filename": img_path.name, "stage1": stage1}
+            is_unsafe = stage1.get("assessment") == "unsafe"
+
+            if not is_unsafe:
+                shutil.move(str(img_path), str(self.safe_dir / img_path.name))
+                entry["final"] = "safe"
+                stats["safe"] += 1
+                logs.append(entry)
+                processed.add(img_path.name)
+            else:
+                unsafe_data.append((img_path, image, entry))
+
+        # Stage 2: Batch process unsafe images for usability check
+        if unsafe_data:
+            logger.info("Stage 2: Checking usability (batch processing)...")
+            unsafe_paths, unsafe_images, unsafe_entries = zip(*unsafe_data)
+            stage2_batch_tasks = [(img, STAGE2_PROMPT) for img in unsafe_images]
+            stage2_results = []
+
+            for batch_start in range(0, len(stage2_batch_tasks), BATCH_SIZE):
+                batch_end = min(batch_start + BATCH_SIZE, len(stage2_batch_tasks))
+                current_batch = stage2_batch_tasks[batch_start:batch_end]
+                batch_responses = self.run_inference_batch(current_batch)
+                stage2_results.extend([self.parse_json(resp) for resp in batch_responses])
+
+            for img_path, stage2, entry in zip(unsafe_paths, stage2_results, unsafe_entries):
+                entry["stage2"] = stage2
+
+                if stage2.get("is_usable"):
+                    shutil.move(str(img_path), str(self.unsafe_usable_dir / img_path.name))
+                    entry["final"] = "unsafe_usable"
+                    stats["unsafe_usable"] += 1
+                else:
+                    shutil.move(str(img_path), str(self.unsafe_unusable_dir / img_path.name))
+                    entry["final"] = "unsafe_unusable"
+                    stats["unsafe_unusable"] += 1
+
+                logs.append(entry)
+                processed.add(img_path.name)
 
             logs.append(entry)
             processed.add(img_path.name)

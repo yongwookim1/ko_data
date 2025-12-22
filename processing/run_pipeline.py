@@ -11,8 +11,15 @@ class PipelineRunner:
         from .evaluate_mllm import MLLMEvaluator
         from .judge_safety import SafetyJudge
         from .analyze_results import ResultsAnalyzer
-        
+        from config import FILTER_MODEL_PATH
+
         self.skip_stages = skip_stages or []
+        self.model_path = FILTER_MODEL_PATH
+
+        # Shared model instance
+        self.shared_model = None
+        self.shared_processor = None
+
         self.stages = [
             ("filter", "Image Filtering", ImageFilter),
             ("queries", "Query Generation", QueryGenerator),
@@ -20,6 +27,57 @@ class PipelineRunner:
             ("judge", "Safety Judging", SafetyJudge),
             ("analyze", "Results Analysis", ResultsAnalyzer),
         ]
+
+    def load_shared_model(self):
+        """Load shared model once for all stages"""
+        if self.shared_model is not None:
+            return
+
+        import torch
+        from pathlib import Path
+        from transformers import AutoProcessor, AutoModel
+
+        try:
+            from transformers import Qwen3VLMoeForConditionalGeneration
+            QWEN3_AVAILABLE = True
+        except ImportError:
+            QWEN3_AVAILABLE = False
+
+        model_path = Path(self.model_path)
+        if not model_path.exists():
+            raise FileNotFoundError(f"Model not found at: {self.model_path}")
+
+        logger.info(f"Loading shared model: {self.model_path}")
+
+        is_qwen3 = "qwen3" in self.model_path.lower()
+        if is_qwen3 and QWEN3_AVAILABLE:
+            self.shared_model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
+                self.model_path,
+                torch_dtype=torch.bfloat16,
+                device_map="auto",
+                trust_remote_code=True
+            )
+        else:
+            self.shared_model = AutoModel.from_pretrained(
+                self.model_path,
+                torch_dtype=torch.bfloat16,
+                device_map="auto",
+                trust_remote_code=True
+            )
+
+        self.shared_processor = AutoProcessor.from_pretrained(
+            self.model_path, trust_remote_code=True
+        )
+
+        # Compile model for better performance
+        try:
+            import torch
+            self.shared_model = torch.compile(self.shared_model)
+            logger.info("Model compiled with torch.compile")
+        except Exception as e:
+            logger.warning(f"torch.compile failed: {e}")
+
+        logger.info("Shared model loaded successfully")
 
     def run_stage(self, stage_id, stage_name, stage_class):
         """Run a single stage."""
@@ -32,7 +90,11 @@ class PipelineRunner:
         logger.info("=" * 60)
 
         try:
-            stage = stage_class()
+            # Pass shared model to stages that need it
+            if stage_id in ["filter", "queries", "evaluate"]:
+                stage = stage_class(shared_model=self.shared_model, shared_processor=self.shared_processor)
+            else:
+                stage = stage_class()
             stage.run()
             logger.info(f"✅ Completed: {stage_name}\n")
             return True
@@ -51,6 +113,9 @@ class PipelineRunner:
         logger.info("🎯 MLLM Safety Evaluation Pipeline")
         logger.info("=" * 60)
         logger.info(f"Stages to skip: {self.skip_stages if self.skip_stages else 'None'}\n")
+
+        # Load shared model once
+        self.load_shared_model()
 
         for stage_id, stage_name, stage_class in self.stages:
             success = self.run_stage(stage_id, stage_name, stage_class)
