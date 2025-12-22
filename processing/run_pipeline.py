@@ -5,6 +5,8 @@ logger = logging.getLogger(__name__)
 
 
 class PipelineRunner:
+    """Orchestrates the complete MLLM safety evaluation pipeline."""
+
     def __init__(self, skip_stages=None):
         from .filter_images import ImageFilter
         from .generate_queries import QueryGenerator
@@ -16,7 +18,7 @@ class PipelineRunner:
         self.skip_stages = skip_stages or []
         self.model_path = FILTER_MODEL_PATH
 
-        # Shared model instance
+        # Shared model instance to avoid reloading
         self.shared_model = None
         self.shared_processor = None
 
@@ -29,7 +31,7 @@ class PipelineRunner:
         ]
 
     def load_shared_model(self):
-        """Load shared model once for all stages"""
+        """Load shared model once for all stages to avoid reloading."""
         if self.shared_model is not None:
             return
 
@@ -49,38 +51,57 @@ class PipelineRunner:
 
         logger.info(f"Loading shared model: {self.model_path}")
 
-        is_qwen3 = "qwen3" in self.model_path.lower()
-        if is_qwen3 and QWEN3_AVAILABLE:
-            self.shared_model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
-                self.model_path,
-                torch_dtype=torch.bfloat16,
-                device_map="auto",
-                trust_remote_code=True
-            )
-        else:
-            self.shared_model = AutoModel.from_pretrained(
-                self.model_path,
-                torch_dtype=torch.bfloat16,
-                device_map="auto",
-                trust_remote_code=True
-            )
+        # Check available GPU memory before loading
+        if torch.cuda.is_available():
+            gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            logger.info(f"Available GPU memory: {gpu_memory:.1f}GB")
 
-        self.shared_processor = AutoProcessor.from_pretrained(
-            self.model_path, trust_remote_code=True
-        )
+        try:
+            is_qwen3 = "qwen3" in self.model_path.lower()
+            if is_qwen3 and QWEN3_AVAILABLE:
+                self.shared_model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
+                    self.model_path,
+                    torch_dtype=torch.bfloat16,
+                    device_map="auto",
+                    trust_remote_code=True,
+                    low_cpu_mem_usage=True
+                )
+            else:
+                self.shared_model = AutoModel.from_pretrained(
+                    self.model_path,
+                    torch_dtype=torch.bfloat16,
+                    device_map="auto",
+                    trust_remote_code=True,
+                    low_cpu_mem_usage=True
+                )
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                logger.error("GPU memory insufficient for model loading")
+                logger.error("Try: 1) Reduce model size, 2) Use CPU, 3) Clear GPU cache")
+                raise RuntimeError("Insufficient GPU memory for model loading") from e
+            else:
+                raise
 
-        # Compile model for better performance
+        try:
+            self.shared_processor = AutoProcessor.from_pretrained(
+                self.model_path, trust_remote_code=True
+            )
+        except Exception as e:
+            logger.error(f"Failed to load processor: {e}")
+            raise
+
+        # Optional model compilation for performance
         try:
             import torch
             self.shared_model = torch.compile(self.shared_model)
             logger.info("Model compiled with torch.compile")
         except Exception as e:
-            logger.warning(f"torch.compile failed: {e}")
+            logger.warning(f"torch.compile failed (non-critical): {e}")
 
         logger.info("Shared model loaded successfully")
 
     def run_stage(self, stage_id, stage_name, stage_class):
-        """Run a single stage."""
+        """Run a single pipeline stage."""
         if stage_id in self.skip_stages:
             logger.info(f"⏭️  Skipping stage: {stage_name}")
             return True
@@ -89,6 +110,12 @@ class PipelineRunner:
         logger.info(f"🚀 Starting: {stage_name}")
         logger.info("=" * 60)
 
+        # Monitor GPU memory usage
+        import torch
+        if torch.cuda.is_available():
+            gpu_memory_before = torch.cuda.mem_get_info()[0] / (1024**3)
+            logger.info(f"GPU memory before {stage_name}: {gpu_memory_before:.1f}GB free")
+
         try:
             # Pass shared model to stages that need it
             if stage_id in ["filter", "queries", "evaluate"]:
@@ -96,12 +123,29 @@ class PipelineRunner:
             else:
                 stage = stage_class()
             stage.run()
+
+            # Report memory usage
+            if torch.cuda.is_available():
+                gpu_memory_after = torch.cuda.mem_get_info()[0] / (1024**3)
+                memory_used = gpu_memory_before - gpu_memory_after
+                logger.info(f"GPU memory after {stage_name}: {gpu_memory_after:.1f}GB free ({memory_used:.1f}GB used)")
+
             logger.info(f"✅ Completed: {stage_name}\n")
             return True
+
         except KeyboardInterrupt:
             logger.warning(f"\n⚠️  Interrupted: {stage_name}")
             logger.info("Checkpoint saved. You can resume later.")
             return False
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                logger.error(f"❌ OOM Error in {stage_name}: {e}")
+                logger.error("Try reducing batch sizes or using smaller model")
+                return False
+            else:
+                logger.error(f"❌ Runtime Error in {stage_name}: {e}")
+                logger.exception(e)
+                return False
         except Exception as e:
             logger.error(f"❌ Error in {stage_name}: {e}")
             logger.exception(e)

@@ -43,6 +43,8 @@ Output JSON only:
 
 
 class SafetyJudge:
+    """Judges safety of MLLM responses using a separate judge model."""
+
     def __init__(self):
         self.model = None
         self.tokenizer = None

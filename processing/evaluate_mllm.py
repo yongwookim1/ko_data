@@ -24,8 +24,10 @@ BATCH_SIZE = 1
 
 
 class MLLMEvaluator:
+    """Evaluates MLLM responses to benchmark queries."""
+
     def __init__(self, shared_model=None, shared_processor=None):
-        # Use shared model if provided
+        # Use shared model if provided to avoid reloading
         self.model = shared_model
         self.processor = shared_processor
 
@@ -122,6 +124,7 @@ class MLLMEvaluator:
         return responses
 
     def run(self):
+        """Evaluate MLLM responses for all benchmark queries."""
         if not QUERIES_FILE.exists():
             raise FileNotFoundError(f"Queries file not found: {QUERIES_FILE}")
 
@@ -141,7 +144,7 @@ class MLLMEvaluator:
         logger.info(f"Found {len(queries_data)} total, {len(samples)} remaining")
 
         # Process samples in smaller batches to prevent memory accumulation
-        SAMPLE_BATCH_SIZE = 10  # Process 10 samples at a time
+        SAMPLE_BATCH_SIZE = 10
 
         all_results = {}
         for sample_batch_start in tqdm(range(0, len(samples), SAMPLE_BATCH_SIZE), desc="Processing sample batches"):

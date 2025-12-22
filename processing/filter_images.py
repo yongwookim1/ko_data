@@ -51,6 +51,8 @@ BATCH_SIZE = 1
 
 
 class ImageFilter:
+    """Filters images for unsafe content and categorizes them."""
+
     def __init__(self, source_dir=None, shared_model=None, shared_processor=None):
         self.source_dir = Path(source_dir) if source_dir else CRAWLED_DIR
         self.output_dir = self.source_dir / "filtered"
@@ -60,7 +62,7 @@ class ImageFilter:
         self.log_file = RESULTS_DIR / "filtering_log.json"
         self.checkpoint_file = RESULTS_DIR / "filtering_checkpoint.json"
 
-        # Use shared model if provided
+        # Use shared model if provided to avoid reloading
         self.model = shared_model
         self.processor = shared_processor
 
@@ -198,7 +200,7 @@ class ImageFilter:
         stats = {"safe": 0, "unsafe_usable": 0, "unsafe_unusable": 0, "error": 0}
 
         # Process images in smaller batches to prevent memory accumulation
-        IMAGE_BATCH_SIZE = 20  # Process 20 images at a time
+        IMAGE_BATCH_SIZE = 20
 
         for img_batch_start in tqdm(range(0, len(images), IMAGE_BATCH_SIZE), desc="Processing image batches"):
             img_batch_end = min(img_batch_start + IMAGE_BATCH_SIZE, len(images))
@@ -240,7 +242,7 @@ class ImageFilter:
             if not image_objects:
                 continue
 
-            # Stage 1: Batch process images for safety check
+            # Stage 1: Safety assessment
             stage1_batch_tasks = [(img, STAGE1_PROMPT) for img in image_objects]
             stage1_results = []
 
@@ -267,7 +269,7 @@ class ImageFilter:
                 else:
                     unsafe_data.append((img_path, image, entry))
 
-            # Stage 2: Batch process unsafe images for usability check
+            # Stage 2: Usability assessment for unsafe images
             if unsafe_data:
                 unsafe_paths, unsafe_images, unsafe_entries = zip(*unsafe_data)
                 stage2_batch_tasks = [(img, STAGE2_PROMPT) for img in unsafe_images]
@@ -294,7 +296,7 @@ class ImageFilter:
                     logs.append(entry)
                     processed.add(img_path.name)
 
-            # Memory cleanup after each image batch
+            # Memory cleanup
             del image_objects
             if hasattr(torch.cuda, 'empty_cache'):
                 torch.cuda.empty_cache()
