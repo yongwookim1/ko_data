@@ -20,7 +20,7 @@ OUTPUT_FILE = Path(RESULTS_DIR) / "evaluation_responses.json"
 CHECKPOINT_FILE = Path(RESULTS_DIR) / "evaluation_checkpoint.json"
 SAVE_INTERVAL = 100  # Reduced I/O frequency
 
-BATCH_SIZE = 4
+BATCH_SIZE = 2
 
 
 class MLLMEvaluator:
