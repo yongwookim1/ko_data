@@ -115,7 +115,10 @@ class MLLMEvaluator:
                 inference_context = torch.no_grad()
             else:
                 # Qwen3 및 기타 모델: Autocast 활성화 (scatter 오류 방지)
-                inference_context = torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16) if torch.cuda.is_available() else torch.no_grad()
+                # Use model's dtype for autocast to ensure consistency
+                model_dtype = next(self.model.parameters()).dtype
+                autocast_dtype = torch.bfloat16 if model_dtype == torch.bfloat16 else torch.float16
+                inference_context = torch.cuda.amp.autocast(enabled=True, dtype=autocast_dtype) if torch.cuda.is_available() else torch.no_grad()
 
             with torch.no_grad(), inference_context:
                 # Enhanced generation parameters for complete responses

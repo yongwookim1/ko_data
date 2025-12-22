@@ -107,6 +107,21 @@ class PipelineRunner:
                         low_cpu_mem_usage=True
                     )
                     logger.info("Qwen3 loaded successfully with bfloat16")
+                except RuntimeError as dtype_error:
+                    if "scatter" in str(dtype_error).lower() or "dtype" in str(dtype_error).lower():
+                        logger.warning(f"Dtype issue detected with bfloat16: {dtype_error}")
+                        logger.info("Falling back to float32 for Qwen3...")
+                        # Try float32 instead of bfloat16 to avoid dtype issues
+                        self.shared_model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
+                            self.model_path,
+                            dtype=torch.float32,
+                            device_map=device_map,
+                            trust_remote_code=True,
+                            low_cpu_mem_usage=True
+                        )
+                        logger.info("Qwen3 loaded successfully with float32")
+                    else:
+                        raise
                 except RuntimeError as oom_error:
                     logger.warning(f"bfloat16 loading failed: {oom_error}")
                     logger.info("Falling back to 8-bit quantization...")
@@ -126,6 +141,21 @@ class PipelineRunner:
                         low_cpu_mem_usage=True
                     )
                     logger.info("Qwen3 loaded successfully with 8-bit quantization")
+                except Exception as dtype_error:
+                    if "scatter" in str(dtype_error).lower() or "dtype" in str(dtype_error).lower():
+                        logger.warning(f"Dtype issue detected in Qwen3 loading: {dtype_error}")
+                        logger.info("Attempting final fallback with float32...")
+                        # Final fallback: use float32 to ensure dtype consistency
+                        self.shared_model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
+                            self.model_path,
+                            dtype=torch.float32,
+                            device_map=device_map,
+                            trust_remote_code=True,
+                            low_cpu_mem_usage=True
+                        )
+                        logger.info("Qwen3 loaded successfully with float32 fallback")
+                    else:
+                        raise
             else:
                 self.shared_model = AutoModel.from_pretrained(
                     self.model_path,
@@ -154,12 +184,15 @@ class PipelineRunner:
             logger.error(f"Failed to load processor: {e}")
             raise
 
-        # Optional model compilation for performance
-        try:
-            self.shared_model = torch.compile(self.shared_model)
-            logger.info("Model compiled with torch.compile")
-        except Exception as e:
-            logger.warning(f"torch.compile failed (non-critical): {e}")
+        # Optional model compilation for performance (skip for Qwen3 due to dtype issues)
+        if not is_qwen3:
+            try:
+                self.shared_model = torch.compile(self.shared_model)
+                logger.info("Model compiled with torch.compile")
+            except Exception as e:
+                logger.warning(f"torch.compile failed (non-critical): {e}")
+        else:
+            logger.info("Skipping torch.compile for Qwen3 model (known dtype issues)")
 
         logger.info("Shared model loaded successfully")
 
@@ -194,7 +227,6 @@ class PipelineRunner:
 
             logger.info(f"✅ Completed: {stage_name}\n")
 
-            # 수정: evaluate 단계가 끝난 후에만 공유 모델 언로드 (filter, queries 단계에서는 유지)
             if stage_id == "evaluate":
                 self.unload_shared_model()
 
