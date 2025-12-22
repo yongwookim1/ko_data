@@ -20,7 +20,7 @@ OUTPUT_FILE = Path(RESULTS_DIR) / "evaluation_responses.json"
 CHECKPOINT_FILE = Path(RESULTS_DIR) / "evaluation_checkpoint.json"
 SAVE_INTERVAL = 100  # Reduced I/O frequency
 
-BATCH_SIZE = 2
+BATCH_SIZE = 1
 
 
 class MLLMEvaluator:
@@ -94,21 +94,30 @@ class MLLMEvaluator:
 
         inputs = self.processor(text=texts, images=images, padding=True, return_tensors="pt").to(self.model.device)
 
-        with torch.no_grad():
-            # Enhanced generation parameters for complete responses
-            generated_ids = self.model.generate(
-                **inputs,
-                max_new_tokens=2048,
-                do_sample=False,
-                pad_token_id=self.processor.tokenizer.eos_token_id,
-                eos_token_id=self.processor.tokenizer.eos_token_id,
-            )
+        try:
+            with torch.no_grad():
+                # Enhanced generation parameters for complete responses
+                generated_ids = self.model.generate(
+                    **inputs,
+                    max_new_tokens=2048,
+                    do_sample=False,
+                    pad_token_id=self.processor.tokenizer.eos_token_id,
+                    eos_token_id=self.processor.tokenizer.eos_token_id,
+                )
 
-            responses = []
-            for i, (inp_ids, gen_ids) in enumerate(zip(inputs.input_ids, generated_ids)):
-                trimmed = gen_ids[len(inp_ids):]
-                response = self.processor.decode(trimmed, skip_special_tokens=True).strip()
-                responses.append(response)
+                responses = []
+                for i, (inp_ids, gen_ids) in enumerate(zip(inputs.input_ids, generated_ids)):
+                    trimmed = gen_ids[len(inp_ids):]
+                    response = self.processor.decode(trimmed, skip_special_tokens=True).strip()
+                    responses.append(response)
+        finally:
+            # Aggressive memory cleanup
+            del inputs
+            del generated_ids
+            if hasattr(torch.cuda, 'empty_cache'):
+                torch.cuda.empty_cache()
+            import gc
+            gc.collect()
 
         return responses
 
@@ -131,60 +140,69 @@ class MLLMEvaluator:
         samples = [s for s in queries_data if s.get("image_id") not in processed]
         logger.info(f"Found {len(queries_data)} total, {len(samples)} remaining")
 
-        batch_tasks = []
-        task_metadata = []
-
-        for sample_idx, sample in enumerate(samples):
-            try:
-                image_path = Path(sample["image_path"])
-                if not image_path.exists():
-                    logger.warning(f"Image not found: {image_path}")
-                    continue
-
-                image = Image.open(image_path).convert("RGB")
-                queries = sample.get("queries", {})
-
-                for query_type, query_text in queries.items():
-                    batch_tasks.append((image, query_text))
-                    task_metadata.append((sample_idx, query_type, sample))
-
-            except Exception as e:
-                logger.error(f"Error preparing {sample.get('image_id')}: {e}")
-                continue
-
-        logger.info(f"Prepared {len(batch_tasks)} total query evaluations")
+        # Process samples in smaller batches to prevent memory accumulation
+        SAMPLE_BATCH_SIZE = 10  # Process 10 samples at a time
 
         all_results = {}
-        for batch_start in tqdm(range(0, len(batch_tasks), BATCH_SIZE), desc="Evaluating batches"):
-            batch_end = min(batch_start + BATCH_SIZE, len(batch_tasks))
-            current_batch = batch_tasks[batch_start:batch_end]
-            current_metadata = task_metadata[batch_start:batch_end]
+        for sample_batch_start in tqdm(range(0, len(samples), SAMPLE_BATCH_SIZE), desc="Processing sample batches"):
+            sample_batch_end = min(sample_batch_start + SAMPLE_BATCH_SIZE, len(samples))
+            current_sample_batch = samples[sample_batch_start:sample_batch_end]
 
-            try:
-                batch_responses = self.generate_responses_batch(current_batch)
+            # Load images only for current batch
+            batch_tasks = []
+            task_metadata = []
 
-                for (sample_idx, query_type, sample), response in zip(current_metadata, batch_responses):
-                    sample_id = sample["image_id"]
-                    if sample_id not in all_results:
-                        all_results[sample_id] = {
-                            "image_id": sample_id,
-                            "image_path": sample["image_path"],
-                            "safety_categories": sample.get("safety_categories", []),
-                            "responses": {}
+            for sample_idx, sample in enumerate(current_sample_batch):
+                try:
+                    image_path = Path(sample["image_path"])
+                    if not image_path.exists():
+                        logger.warning(f"Image not found: {image_path}")
+                        continue
+
+                    image = Image.open(image_path).convert("RGB")
+                    queries = sample.get("queries", {})
+
+                    for query_type, query_text in queries.items():
+                        batch_tasks.append((image, query_text))
+                        task_metadata.append((sample_idx, query_type, sample))
+
+                except Exception as e:
+                    logger.error(f"Error preparing {sample.get('image_id')}: {e}")
+                    continue
+
+            # Process queries in sub-batches
+            for batch_start in range(0, len(batch_tasks), BATCH_SIZE):
+                batch_end = min(batch_start + BATCH_SIZE, len(batch_tasks))
+                current_batch = batch_tasks[batch_start:batch_end]
+                current_metadata = task_metadata[batch_start:batch_end]
+
+                try:
+                    batch_responses = self.generate_responses_batch(current_batch)
+
+                    for (sample_idx, query_type, sample), response in zip(current_metadata, batch_responses):
+                        sample_id = sample["image_id"]
+                        if sample_id not in all_results:
+                            all_results[sample_id] = {
+                                "image_id": sample_id,
+                                "image_path": sample["image_path"],
+                                "safety_categories": sample.get("safety_categories", []),
+                                "responses": {}
+                            }
+
+                        all_results[sample_id]["responses"][query_type] = {
+                            "query": sample["queries"][query_type],
+                            "response": response
                         }
 
-                    all_results[sample_id]["responses"][query_type] = {
-                        "query": sample["queries"][query_type],
-                        "response": response
-                    }
+                except Exception as e:
+                    logger.error(f"Error in sub-batch {batch_start//BATCH_SIZE}: {e}")
+                    continue
 
-                # Memory cleanup after each batch
-                if hasattr(torch.cuda, 'empty_cache'):
-                    torch.cuda.empty_cache()
-
-            except Exception as e:
-                logger.error(f"Error in batch {batch_start//BATCH_SIZE}: {e}")
-                continue
+            # Memory cleanup after processing each sample batch
+            if hasattr(torch.cuda, 'empty_cache'):
+                torch.cuda.empty_cache()
+            import gc
+            gc.collect()
 
         for sample_id, result in all_results.items():
             responses.append(result)

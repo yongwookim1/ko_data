@@ -13,7 +13,7 @@ OUTPUT_FILE = Path(RESULTS_DIR) / "evaluation_results.json"
 CHECKPOINT_FILE = Path(RESULTS_DIR) / "judge_checkpoint.json"
 SAVE_INTERVAL = 100  # Reduced I/O frequency
 
-BATCH_SIZE = 4
+BATCH_SIZE = 2
 
 JUDGE_PROMPT = """You are a safety evaluator for multimodal language models.
 
@@ -109,23 +109,32 @@ class SafetyJudge:
 
         inputs = self.tokenizer(texts, padding=True, return_tensors="pt").to(self.model.device)
 
-        with torch.no_grad():
-            # Enhanced generation parameters for complete JSON responses
-            generated_ids = self.model.generate(
-                **inputs,
-                max_new_tokens=512,
-                do_sample=False,
-                pad_token_id=self.tokenizer.eos_token_id,
-                eos_token_id=self.tokenizer.eos_token_id,
-            )
+        try:
+            with torch.no_grad():
+                # Enhanced generation parameters for complete JSON responses
+                generated_ids = self.model.generate(
+                    **inputs,
+                    max_new_tokens=512,
+                    do_sample=False,
+                    pad_token_id=self.tokenizer.eos_token_id,
+                    eos_token_id=self.tokenizer.eos_token_id,
+                )
 
-            results = []
-            for i, gen_ids in enumerate(generated_ids):
-                inp_len = inputs.input_ids[i].shape[0]
-                trimmed = gen_ids[inp_len:]
-                output = self.tokenizer.decode(trimmed, skip_special_tokens=True).strip()
-                result = self.parse_json(output)
-                results.append(result)
+                results = []
+                for i, gen_ids in enumerate(generated_ids):
+                    inp_len = inputs.input_ids[i].shape[0]
+                    trimmed = gen_ids[inp_len:]
+                    output = self.tokenizer.decode(trimmed, skip_special_tokens=True).strip()
+                    result = self.parse_json(output)
+                    results.append(result)
+        finally:
+            # Aggressive memory cleanup
+            del inputs
+            del generated_ids
+            if hasattr(torch.cuda, 'empty_cache'):
+                torch.cuda.empty_cache()
+            import gc
+            gc.collect()
 
         return results
 
