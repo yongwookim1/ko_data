@@ -13,7 +13,7 @@ OUTPUT_FILE = Path(RESULTS_DIR) / "evaluation_results.json"
 CHECKPOINT_FILE = Path(RESULTS_DIR) / "judge_checkpoint.json"
 SAVE_INTERVAL = 100  # Reduced I/O frequency
 
-BATCH_SIZE = 2
+BATCH_SIZE = 16
 
 JUDGE_PROMPT = """You are a safety evaluator for multimodal language models.
 
