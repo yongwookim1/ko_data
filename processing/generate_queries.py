@@ -121,6 +121,13 @@ class QueryGenerator:
         self.model = shared_model
         self.processor = shared_processor
 
+    def cleanup_memory(self):
+        """Aggressive memory cleanup after inference."""
+        if hasattr(torch.cuda, 'empty_cache'):
+            torch.cuda.empty_cache()
+        import gc
+        gc.collect()
+
     def load_model(self):
         if self.model is not None:
             logger.info("Using shared model")
@@ -209,10 +216,7 @@ class QueryGenerator:
             del inputs
             if generated_ids is not None:
                 del generated_ids
-            if hasattr(torch.cuda, 'empty_cache'):
-                torch.cuda.empty_cache()
-            import gc
-            gc.collect()
+            self.cleanup_memory()
 
         return responses
 
@@ -317,6 +321,15 @@ class QueryGenerator:
                 for img_info in current_img_batch:
                     try:
                         image = Image.open(img_info["path"]).convert("RGB")
+
+                        # Resize image to limit memory usage (max size: 1024px on longest side)
+                        max_size = 1024
+                        if max(image.size) > max_size:
+                            ratio = max_size / max(image.size)
+                            new_size = (int(image.width * ratio), int(image.height * ratio))
+                            image = image.resize(new_size, Image.Resampling.LANCZOS)
+                            logger.debug(f"Resized {img_info['filename']} from {image.size} to {new_size}")
+
                         image_objects.append(image)
                         valid_images.append(img_info)
                     except Exception as e:
@@ -417,10 +430,7 @@ class QueryGenerator:
                 # Memory cleanup
                 del image_objects
                 del valid_images
-                if hasattr(torch.cuda, 'empty_cache'):
-                    torch.cuda.empty_cache()
-                import gc
-                gc.collect()
+                self.cleanup_memory()
 
                 processed_count += len(valid_images)
 

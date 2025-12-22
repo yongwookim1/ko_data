@@ -31,6 +31,13 @@ class MLLMEvaluator:
         self.model = shared_model
         self.processor = shared_processor
 
+    def cleanup_memory(self):
+        """Aggressive memory cleanup after inference."""
+        if hasattr(torch.cuda, 'empty_cache'):
+            torch.cuda.empty_cache()
+        import gc
+        gc.collect()
+
     def load_model(self):
         if self.model is not None:
             logger.info("Using shared model")
@@ -134,10 +141,7 @@ class MLLMEvaluator:
             del inputs
             if generated_ids is not None:
                 del generated_ids
-            if hasattr(torch.cuda, 'empty_cache'):
-                torch.cuda.empty_cache()
-            import gc
-            gc.collect()
+            self.cleanup_memory()
 
         return responses
 
@@ -181,6 +185,15 @@ class MLLMEvaluator:
                         continue
 
                     image = Image.open(image_path).convert("RGB")
+
+                    # Resize image to limit memory usage (max size: 1024px on longest side)
+                    max_size = 1024
+                    if max(image.size) > max_size:
+                        ratio = max_size / max(image.size)
+                        new_size = (int(image.width * ratio), int(image.height * ratio))
+                        image = image.resize(new_size, Image.Resampling.LANCZOS)
+                        logger.debug(f"Resized {Path(image_path).name} from {image.size} to {new_size}")
+
                     queries = sample.get("queries", {})
 
                     for query_type, query_text in queries.items():
@@ -220,10 +233,7 @@ class MLLMEvaluator:
                     continue
 
             # Memory cleanup after processing each sample batch
-            if hasattr(torch.cuda, 'empty_cache'):
-                torch.cuda.empty_cache()
-            import gc
-            gc.collect()
+            self.cleanup_memory()
 
         for sample_id, result in all_results.items():
             responses.append(result)

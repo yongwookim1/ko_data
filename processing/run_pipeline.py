@@ -1,5 +1,6 @@
 import logging
 import sys
+import torch
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,6 @@ class PipelineRunner:
             self.shared_processor = None
 
         # Aggressive GPU memory cleanup
-        import torch
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         import gc
@@ -54,7 +54,6 @@ class PipelineRunner:
         if self.shared_model is not None:
             return
 
-        import torch
         import os
         from pathlib import Path
         from transformers import AutoProcessor, AutoModel
@@ -157,7 +156,6 @@ class PipelineRunner:
 
         # Optional model compilation for performance
         try:
-            import torch
             self.shared_model = torch.compile(self.shared_model)
             logger.info("Model compiled with torch.compile")
         except Exception as e:
@@ -176,7 +174,6 @@ class PipelineRunner:
         logger.info("=" * 60)
 
         # Monitor GPU memory usage
-        import torch
         if torch.cuda.is_available():
             gpu_memory_before = torch.cuda.mem_get_info()[0] / (1024**3)
             logger.info(f"GPU memory before {stage_name}: {gpu_memory_before:.1f}GB free")

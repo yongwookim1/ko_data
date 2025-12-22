@@ -71,6 +71,13 @@ class ImageFilter:
         self.unsafe_usable_dir.mkdir(parents=True, exist_ok=True)
         self.unsafe_unusable_dir.mkdir(parents=True, exist_ok=True)
 
+    def cleanup_memory(self):
+        """Aggressive memory cleanup after inference."""
+        if hasattr(torch.cuda, 'empty_cache'):
+            torch.cuda.empty_cache()
+        import gc
+        gc.collect()
+
     def load_model(self):
         if self.model is not None:
             logger.info("Using shared model")
@@ -181,10 +188,7 @@ class ImageFilter:
             del inputs
             if generated_ids is not None:
                 del generated_ids
-            if hasattr(torch.cuda, 'empty_cache'):
-                torch.cuda.empty_cache()
-            import gc
-            gc.collect()
+            self.cleanup_memory()
 
         return responses
 
@@ -248,6 +252,15 @@ class ImageFilter:
             for img_path in valid_images:
                 try:
                     image = Image.open(img_path).convert("RGB")
+
+                    # Resize image to limit memory usage (max size: 1024px on longest side)
+                    max_size = 1024
+                    if max(image.size) > max_size:
+                        ratio = max_size / max(image.size)
+                        new_size = (int(image.width * ratio), int(image.height * ratio))
+                        image = image.resize(new_size, Image.Resampling.LANCZOS)
+                        logger.debug(f"Resized {img_path.name} from {image.size} to {new_size}")
+
                     image_objects.append(image)
                     valid_paths.append(img_path)
                 except Exception as e:
@@ -316,10 +329,7 @@ class ImageFilter:
 
             # Memory cleanup
             del image_objects
-            if hasattr(torch.cuda, 'empty_cache'):
-                torch.cuda.empty_cache()
-            import gc
-            gc.collect()
+            self.cleanup_memory()
 
             # Save progress periodically
             if (img_batch_start + IMAGE_BATCH_SIZE) % SAVE_INTERVAL == 0:
