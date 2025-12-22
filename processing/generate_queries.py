@@ -173,7 +173,11 @@ class QueryGenerator:
 
         generated_ids = None
         try:
-            with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+            # Use different autocast dtype based on model type
+            is_qwen3 = hasattr(self.model, 'config') and "qwen3" in str(self.model.config.__class__).lower()
+            autocast_dtype = torch.float16 if is_qwen3 else torch.bfloat16
+
+            with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=autocast_dtype):
                 # Check if model supports use_cache (Qwen3 doesn't)
                 generate_kwargs = {
                     "max_new_tokens": 512,
@@ -183,7 +187,7 @@ class QueryGenerator:
                 }
 
                 # Add use_cache only for non-Qwen3 models
-                if not hasattr(self.model, 'config') or "qwen3" not in str(self.model.config.__class__).lower():
+                if not is_qwen3:
                     generate_kwargs["use_cache"] = True
 
                 generated_ids = self.model.generate(**inputs, **generate_kwargs)

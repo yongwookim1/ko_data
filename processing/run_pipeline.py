@@ -78,9 +78,10 @@ class PipelineRunner:
 
             is_qwen3 = "qwen3" in self.model_path.lower()
             if is_qwen3 and QWEN3_AVAILABLE:
+                # Qwen3 MoE models work better with float16
                 self.shared_model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
                     self.model_path,
-                    dtype=torch.bfloat16,  # torch_dtype -> dtype
+                    dtype=torch.float16,  # Use float16 for Qwen3 MoE stability
                     device_map=device_map,
                     trust_remote_code=True,
                     low_cpu_mem_usage=True
@@ -89,7 +90,7 @@ class PipelineRunner:
             else:
                 self.shared_model = AutoModel.from_pretrained(
                     self.model_path,
-                    dtype=torch.bfloat16,  # torch_dtype -> dtype
+                    dtype=torch.bfloat16,  # Keep bfloat16 for other models
                     device_map=device_map,
                     trust_remote_code=True,
                     low_cpu_mem_usage=True,
