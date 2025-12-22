@@ -427,12 +427,15 @@ class QueryGenerator:
                     }
                     results.append(result)
 
+                # Get count before cleanup
+                batch_processed = len(valid_images)
+
                 # Memory cleanup
                 del image_objects
                 del valid_images
                 self.cleanup_memory()
 
-                processed_count += len(valid_images)
+                processed_count += batch_processed
 
         with open(self.output_file, "w", encoding="utf-8") as f:
             json.dump(results, f, ensure_ascii=False, indent=2)
