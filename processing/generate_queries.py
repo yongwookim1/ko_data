@@ -165,6 +165,7 @@ class QueryGenerator:
             return []
 
         images, prompts = zip(*image_prompt_pairs)
+        images = list(images)  # Convert tuple to list for image processor
 
         messages_batch = []
         for image, prompt in zip(images, prompts):

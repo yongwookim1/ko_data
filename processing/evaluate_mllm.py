@@ -83,6 +83,7 @@ class MLLMEvaluator:
             return []
 
         images, queries = zip(*image_query_pairs)
+        images = list(images)  # Convert tuple to list for image processor
 
         messages_batch = []
         for image, query in zip(images, queries):
