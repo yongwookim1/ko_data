@@ -98,11 +98,12 @@ class MLLMEvaluator:
 
         generated_ids = None
         try:
-            # Qwen3 MoE models need full precision, disable autocast
+            # Check model type and quantization
             is_qwen3 = hasattr(self.model, 'config') and "qwen3" in str(self.model.config.__class__).lower()
+            is_quantized = hasattr(self.model, 'config') and getattr(self.model.config, 'quantization_config', None) is not None
 
-            if is_qwen3:
-                # Qwen3: Use full precision without autocast
+            if is_qwen3 or is_quantized:
+                # Qwen3 or quantized models: Use full precision without autocast
                 inference_context = torch.no_grad()
             else:
                 # Other models: Use autocast for efficiency

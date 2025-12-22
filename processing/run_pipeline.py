@@ -78,19 +78,40 @@ class PipelineRunner:
 
             is_qwen3 = "qwen3" in self.model_path.lower()
             if is_qwen3 and QWEN3_AVAILABLE:
-                # Qwen3 MoE models need float32 for dtype compatibility
-                self.shared_model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
-                    self.model_path,
-                    dtype=torch.float32,  # Use float32 for Qwen3 MoE dtype stability
-                    device_map={"": "cuda:0"},  # Single GPU to avoid dtype issues
-                    trust_remote_code=True,
-                    low_cpu_mem_usage=True
-                    # Qwen3 doesn't support use_cache parameter
-                )
+                # Try bfloat16 first, fallback to 8-bit quantization if needed
+                try:
+                    logger.info("Attempting to load Qwen3 with bfloat16...")
+                    self.shared_model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
+                        self.model_path,
+                        dtype=torch.bfloat16,
+                        device_map={"": "cuda:0"},  # Single GPU for stability
+                        trust_remote_code=True,
+                        low_cpu_mem_usage=True
+                    )
+                    logger.info("Qwen3 loaded successfully with bfloat16")
+                except RuntimeError as oom_error:
+                    logger.warning(f"bfloat16 loading failed: {oom_error}")
+                    logger.info("Falling back to 8-bit quantization...")
+
+                    # 8-bit quantization as fallback
+                    from transformers import BitsAndBytesConfig
+                    quantization_config = BitsAndBytesConfig(
+                        load_in_8bit=True,
+                        llm_int8_enable_fp32_cpu_offload=False
+                    )
+
+                    self.shared_model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
+                        self.model_path,
+                        quantization_config=quantization_config,
+                        device_map={"": "cuda:0"},
+                        trust_remote_code=True,
+                        low_cpu_mem_usage=True
+                    )
+                    logger.info("Qwen3 loaded successfully with 8-bit quantization")
             else:
                 self.shared_model = AutoModel.from_pretrained(
                     self.model_path,
-                    dtype=torch.bfloat16,  # Keep bfloat16 for other models
+                    dtype=torch.bfloat16,
                     device_map=device_map,
                     trust_remote_code=True,
                     low_cpu_mem_usage=True,
