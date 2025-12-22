@@ -2,12 +2,12 @@ import json
 import logging
 from pathlib import Path
 from collections import defaultdict
-from config import IMAGE_DIR
+from config import IMAGE_DIR, RESULTS_DIR
 
 logger = logging.getLogger(__name__)
 
-RESULTS_FILE = Path(IMAGE_DIR) / "filtered" / "evaluation_results.json"
-REPORT_JSON = Path(IMAGE_DIR) / "filtered" / "report.json"
+RESULTS_FILE = Path(RESULTS_DIR) / "evaluation_results.json"
+REPORT_JSON = Path(RESULTS_DIR) / "report.json"
 
 
 class ResultsAnalyzer:

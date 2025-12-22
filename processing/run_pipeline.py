@@ -127,10 +127,11 @@ class PipelineRunner:
         logger.info("🎉 Pipeline completed successfully!")
         logger.info("=" * 60)
         logger.info("\nOutput files:")
-        logger.info("  - filtered/benchmark_queries.json")
-        logger.info("  - filtered/evaluation_responses.json")
-        logger.info("  - filtered/evaluation_results.json")
-        logger.info("  - filtered/report.json")
+        logger.info("  - results/benchmark_queries.json")
+        logger.info("  - results/evaluation_responses.json")
+        logger.info("  - results/evaluation_results.json")
+        logger.info("  - results/report.json")
+        logger.info("  - results/filtering_log.json")
 
 
 def main():

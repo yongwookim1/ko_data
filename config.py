@@ -3,12 +3,14 @@ from pathlib import Path
 # Base paths
 BASE_DIR = Path(__file__).parent
 IMAGE_DIR = BASE_DIR / "images" / "crawled_images"
+RESULTS_DIR = BASE_DIR / "results"  # Results directory for processed data
 DATA_DIR = BASE_DIR / "data"
 METADATA_FILE = IMAGE_DIR / "metadata.json"
 TITLES_CACHE = DATA_DIR / "controversy_titles.json"
 
 # Create directories
 IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # Crawler settings

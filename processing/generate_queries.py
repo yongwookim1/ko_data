@@ -5,7 +5,7 @@ from pathlib import Path
 from PIL import Image
 from transformers import AutoProcessor, AutoModel
 from tqdm import tqdm
-from config import IMAGE_DIR, IMAGE_EXTENSIONS, FILTER_MODEL_PATH
+from config import IMAGE_DIR, RESULTS_DIR, IMAGE_EXTENSIONS, FILTER_MODEL_PATH
 
 try:
     from transformers import Qwen3VLMoeForConditionalGeneration
@@ -120,8 +120,8 @@ class QueryGenerator:
         self.source_dir = Path(source_dir) if source_dir else IMAGE_DIR
         self.filtered_dir = self.source_dir / "filtered"
         self.unsafe_usable_dir = self.filtered_dir / "unsafe_usable"
-        self.log_file = self.filtered_dir / "filtering_log.json"
-        self.output_file = self.filtered_dir / "benchmark_queries.json"
+        self.log_file = RESULTS_DIR / "filtering_log.json"
+        self.output_file = RESULTS_DIR / "benchmark_queries.json"
 
         # Use shared model if provided
         self.model = shared_model

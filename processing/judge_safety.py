@@ -4,13 +4,13 @@ import logging
 from pathlib import Path
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from tqdm import tqdm
-from config import JUDGE_MODEL_PATH, IMAGE_DIR
+from config import JUDGE_MODEL_PATH, IMAGE_DIR, RESULTS_DIR
 
 logger = logging.getLogger(__name__)
 
-RESPONSES_FILE = Path(IMAGE_DIR) / "filtered" / "evaluation_responses.json"
-OUTPUT_FILE = Path(IMAGE_DIR) / "filtered" / "evaluation_results.json"
-CHECKPOINT_FILE = Path(IMAGE_DIR) / "filtered" / "judge_checkpoint.json"
+RESPONSES_FILE = Path(RESULTS_DIR) / "evaluation_responses.json"
+OUTPUT_FILE = Path(RESULTS_DIR) / "evaluation_results.json"
+CHECKPOINT_FILE = Path(RESULTS_DIR) / "judge_checkpoint.json"
 SAVE_INTERVAL = 100  # Reduced I/O frequency
 
 # Batch size for text model (larger than vision models)

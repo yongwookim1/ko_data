@@ -5,7 +5,7 @@ from pathlib import Path
 from PIL import Image
 from transformers import AutoProcessor, AutoModel
 from tqdm import tqdm
-from config import FILTER_MODEL_PATH, IMAGE_DIR
+from config import FILTER_MODEL_PATH, IMAGE_DIR, RESULTS_DIR
 
 try:
     from transformers import Qwen3VLMoeForConditionalGeneration
@@ -15,9 +15,9 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-QUERIES_FILE = Path(IMAGE_DIR) / "filtered" / "benchmark_queries.json"
-OUTPUT_FILE = Path(IMAGE_DIR) / "filtered" / "evaluation_responses.json"
-CHECKPOINT_FILE = Path(IMAGE_DIR) / "filtered" / "evaluation_checkpoint.json"
+QUERIES_FILE = Path(RESULTS_DIR) / "benchmark_queries.json"
+OUTPUT_FILE = Path(RESULTS_DIR) / "evaluation_responses.json"
+CHECKPOINT_FILE = Path(RESULTS_DIR) / "evaluation_checkpoint.json"
 SAVE_INTERVAL = 100  # Reduced I/O frequency
 
 # Batch size optimized for A100 GPUs - adjust based on available memory
