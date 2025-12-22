@@ -95,7 +95,14 @@ class MLLMEvaluator:
         inputs = self.processor(text=texts, images=images, padding=True, return_tensors="pt").to(self.model.device)
 
         with torch.no_grad():
-            generated_ids = self.model.generate(**inputs, max_new_tokens=1024)
+            # Enhanced generation parameters for complete responses
+            generated_ids = self.model.generate(
+                **inputs,
+                max_new_tokens=2048,
+                do_sample=False,
+                pad_token_id=self.processor.tokenizer.eos_token_id,
+                eos_token_id=self.processor.tokenizer.eos_token_id,
+            )
 
             responses = []
             for i, (inp_ids, gen_ids) in enumerate(zip(inputs.input_ids, generated_ids)):
