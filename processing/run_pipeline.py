@@ -80,16 +80,16 @@ class PipelineRunner:
             if is_qwen3 and QWEN3_AVAILABLE:
                 self.shared_model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
                     self.model_path,
-                    torch_dtype=torch.bfloat16,
+                    dtype=torch.bfloat16,  # torch_dtype -> dtype
                     device_map=device_map,
                     trust_remote_code=True,
-                    low_cpu_mem_usage=True,
-                    use_cache=True
+                    low_cpu_mem_usage=True
+                    # Qwen3 doesn't support use_cache parameter
                 )
             else:
                 self.shared_model = AutoModel.from_pretrained(
                     self.model_path,
-                    torch_dtype=torch.bfloat16,
+                    dtype=torch.bfloat16,  # torch_dtype -> dtype
                     device_map=device_map,
                     trust_remote_code=True,
                     low_cpu_mem_usage=True,

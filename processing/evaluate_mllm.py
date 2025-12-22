@@ -100,14 +100,18 @@ class MLLMEvaluator:
         try:
             with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
                 # Enhanced generation parameters for complete responses
-                generated_ids = self.model.generate(
-                    **inputs,
-                    max_new_tokens=2048,
-                    do_sample=False,
-                    pad_token_id=self.processor.tokenizer.eos_token_id,
-                    eos_token_id=self.processor.tokenizer.eos_token_id,
-                    use_cache=True,
-                )
+                generate_kwargs = {
+                    "max_new_tokens": 2048,
+                    "do_sample": False,
+                    "pad_token_id": self.processor.tokenizer.eos_token_id,
+                    "eos_token_id": self.processor.tokenizer.eos_token_id,
+                }
+
+                # Add use_cache only for non-Qwen3 models
+                if not hasattr(self.model, 'config') or "qwen3" not in str(self.model.config.__class__).lower():
+                    generate_kwargs["use_cache"] = True
+
+                generated_ids = self.model.generate(**inputs, **generate_kwargs)
 
                 responses = []
                 for i, (inp_ids, gen_ids) in enumerate(zip(inputs.input_ids, generated_ids)):
