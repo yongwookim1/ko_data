@@ -285,61 +285,70 @@ class QueryGenerator:
 
         images = valid_images
 
+        total_steps = len(images) * 5
+
         logger.info("Generating Q1-Q2 queries...")
         q1_list = [self.generate_q1()] * len(images)
         q2_list = [self.generate_q2()] * len(images)
 
-        logger.info("Generating Q3 queries (batch processing)...")
-        q3_batch_tasks = [(img, Q3_GENERATION_PROMPT) for img in image_objects]
-        q3_list = []
-        for batch_start in range(0, len(q3_batch_tasks), BATCH_SIZE):
-            batch_end = min(batch_start + BATCH_SIZE, len(q3_batch_tasks))
-            current_batch = q3_batch_tasks[batch_start:batch_end]
-            batch_responses = self.run_inference_batch(current_batch)
-            q3_list.extend(batch_responses)
+        logger.info("Generating dynamic queries...")
+        with tqdm(total=total_steps, desc="Query generation") as pbar:
+            # Q3
+            q3_batch_tasks = [(img, Q3_GENERATION_PROMPT) for img in image_objects]
+            q3_list = []
+            for batch_start in range(0, len(q3_batch_tasks), BATCH_SIZE):
+                batch_end = min(batch_start + BATCH_SIZE, len(q3_batch_tasks))
+                current_batch = q3_batch_tasks[batch_start:batch_end]
+                batch_responses = self.run_inference_batch(current_batch)
+                q3_list.extend(batch_responses)
+                pbar.update(len(batch_responses))
 
-            # Memory cleanup
-            if hasattr(torch.cuda, 'empty_cache'):
-                torch.cuda.empty_cache()
+                # Memory cleanup
+                if hasattr(torch.cuda, 'empty_cache'):
+                    torch.cuda.empty_cache()
 
-        logger.info("Generating Q4 queries (batch processing)...")
-        q4_batch_tasks = [(img, Q4_GENERATION_PROMPT.format(original_query=q3))
-                         for img, q3 in zip(image_objects, q3_list)]
-        q4_list = []
-        for batch_start in range(0, len(q4_batch_tasks), BATCH_SIZE):
-            batch_end = min(batch_start + BATCH_SIZE, len(q4_batch_tasks))
-            current_batch = q4_batch_tasks[batch_start:batch_end]
-            batch_responses = self.run_inference_batch(current_batch)
-            q4_list.extend(batch_responses)
+            # Q4
+            q4_batch_tasks = [(img, Q4_GENERATION_PROMPT.format(original_query=q3))
+                             for img, q3 in zip(image_objects, q3_list)]
+            q4_list = []
+            for batch_start in range(0, len(q4_batch_tasks), BATCH_SIZE):
+                batch_end = min(batch_start + BATCH_SIZE, len(q4_batch_tasks))
+                current_batch = q4_batch_tasks[batch_start:batch_end]
+                batch_responses = self.run_inference_batch(current_batch)
+                q4_list.extend(batch_responses)
+                pbar.update(len(batch_responses))
 
-        logger.info("Generating captions (batch processing)...")
-        caption_batch_tasks = [(img, CAPTION_GENERATION_PROMPT) for img in image_objects]
-        caption_list = []
-        for batch_start in range(0, len(caption_batch_tasks), BATCH_SIZE):
-            batch_end = min(batch_start + BATCH_SIZE, len(caption_batch_tasks))
-            current_batch = caption_batch_tasks[batch_start:batch_end]
-            batch_responses = self.run_inference_batch(current_batch)
-            caption_list.extend(batch_responses)
+            # Caption
+            caption_batch_tasks = [(img, CAPTION_GENERATION_PROMPT) for img in image_objects]
+            caption_list = []
+            for batch_start in range(0, len(caption_batch_tasks), BATCH_SIZE):
+                batch_end = min(batch_start + BATCH_SIZE, len(caption_batch_tasks))
+                current_batch = caption_batch_tasks[batch_start:batch_end]
+                batch_responses = self.run_inference_batch(current_batch)
+                caption_list.extend(batch_responses)
+                pbar.update(len(batch_responses))
 
-        logger.info("Generating Q5 queries (batch processing)...")
-        q5_batch_tasks = [(img, Q5_GENERATION_PROMPT.format(caption=caption))
-                         for img, caption in zip(image_objects, caption_list)]
-        q5_list = []
-        for batch_start in range(0, len(q5_batch_tasks), BATCH_SIZE):
-            batch_end = min(batch_start + BATCH_SIZE, len(q5_batch_tasks))
-            current_batch = q5_batch_tasks[batch_start:batch_end]
-            batch_responses = self.run_inference_batch(current_batch)
-            q5_list.extend(batch_responses)
+            # Q5
+            q5_batch_tasks = [(img, Q5_GENERATION_PROMPT.format(caption=caption))
+                             for img, caption in zip(image_objects, caption_list)]
+            q5_list = []
+            for batch_start in range(0, len(q5_batch_tasks), BATCH_SIZE):
+                batch_end = min(batch_start + BATCH_SIZE, len(q5_batch_tasks))
+                current_batch = q5_batch_tasks[batch_start:batch_end]
+                batch_responses = self.run_inference_batch(current_batch)
+                q5_list.extend(batch_responses)
+                pbar.update(len(batch_responses))
 
-        logger.info("Generating Q6 queries (batch processing)...")
-        q6_batch_tasks = [(img, Q6_GENERATION_PROMPT.format(caption=caption, original_query=q5))
-                         for img, caption, q5 in zip(image_objects, caption_list, q5_list)]
-        q6_list = []
-        for batch_start in range(0, len(q6_batch_tasks), BATCH_SIZE):
-            batch_end = min(batch_start + BATCH_SIZE, len(q6_batch_tasks))
-            current_batch = q6_batch_tasks[batch_start:batch_end]
-            batch_responses = self.run_inference_batch(current_batch)
-            q6_list.extend(batch_responses)
+            # Q6
+            q6_batch_tasks = [(img, Q6_GENERATION_PROMPT.format(caption=caption, original_query=q5))
+                             for img, caption, q5 in zip(image_objects, caption_list, q5_list)]
+            q6_list = []
+            for batch_start in range(0, len(q6_batch_tasks), BATCH_SIZE):
+                batch_end = min(batch_start + BATCH_SIZE, len(q6_batch_tasks))
+                current_batch = q6_batch_tasks[batch_start:batch_end]
+                batch_responses = self.run_inference_batch(current_batch)
+                q6_list.extend(batch_responses)
+                pbar.update(len(batch_responses))
 
         logger.info("Combining results...")
         for i, img_info in enumerate(images):
