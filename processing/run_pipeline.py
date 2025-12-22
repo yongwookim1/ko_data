@@ -80,11 +80,11 @@ class PipelineRunner:
             if is_qwen3 and QWEN3_AVAILABLE:
                 # Try bfloat16 first, fallback to 8-bit quantization if needed
                 try:
-                    logger.info("Attempting to load Qwen3 with bfloat16...")
+                    logger.info("Attempting to load Qwen3 with bfloat16 across GPUs...")
                     self.shared_model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
                         self.model_path,
                         dtype=torch.bfloat16,
-                        device_map={"": "cuda:0"},  # Single GPU for stability
+                        device_map=device_map,  # Use multi-GPU distribution
                         trust_remote_code=True,
                         low_cpu_mem_usage=True
                     )
@@ -93,7 +93,7 @@ class PipelineRunner:
                     logger.warning(f"bfloat16 loading failed: {oom_error}")
                     logger.info("Falling back to 8-bit quantization...")
 
-                    # 8-bit quantization as fallback
+                    # 8-bit quantization as fallback - now can use multi-GPU
                     from transformers import BitsAndBytesConfig
                     quantization_config = BitsAndBytesConfig(
                         load_in_8bit=True,
@@ -103,7 +103,7 @@ class PipelineRunner:
                     self.shared_model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
                         self.model_path,
                         quantization_config=quantization_config,
-                        device_map={"": "cuda:0"},
+                        device_map=device_map,  # Use multi-GPU distribution
                         trust_remote_code=True,
                         low_cpu_mem_usage=True
                     )
