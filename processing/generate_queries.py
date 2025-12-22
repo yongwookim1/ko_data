@@ -195,23 +195,45 @@ class QueryGenerator:
 
     def load_filtering_log(self):
         if not self.log_file.exists():
-            raise FileNotFoundError(f"Filtering log not found: {self.log_file}")
+            return []
         with open(self.log_file, "r", encoding="utf-8") as f:
             return json.load(f)
 
     def get_unsafe_usable_images(self):
-        log_data = self.load_filtering_log()
+        # First try to use filtering log if available
         usable = []
-        for entry in log_data:
-            if entry.get("final") == "unsafe_usable":
-                img_path = self.unsafe_usable_dir / entry["filename"]
-                if img_path.exists():
-                    usable.append({
-                        "filename": entry["filename"],
-                        "path": str(img_path),
-                        "categories": entry.get("stage1", {}).get("categories", []),
-                        "rationale": entry.get("stage1", {}).get("rationale", "")
-                    })
+        if self.log_file.exists():
+            try:
+                log_data = self.load_filtering_log()
+                for entry in log_data:
+                    if entry.get("final") == "unsafe_usable":
+                        img_path = self.unsafe_usable_dir / entry["filename"]
+                        if img_path.exists():
+                            usable.append({
+                                "filename": entry["filename"],
+                                "path": str(img_path),
+                                "categories": entry.get("stage1", {}).get("categories", []),
+                                "rationale": entry.get("stage1", {}).get("rationale", "")
+                            })
+                if usable:
+                    return usable
+            except Exception as e:
+                logger.warning(f"Failed to load filtering log: {e}")
+
+        # Fallback: directly scan unsafe_usable directory
+        logger.info("Using fallback: scanning unsafe_usable directory directly")
+        if not self.unsafe_usable_dir.exists():
+            return []
+
+        usable = []
+        for img_file in self.unsafe_usable_dir.iterdir():
+            if img_file.is_file() and img_file.suffix.lower() in IMAGE_EXTENSIONS:
+                usable.append({
+                    "filename": img_file.name,
+                    "path": str(img_file),
+                    "categories": ["unknown"],  # Fallback categories
+                    "rationale": "Direct scan fallback"
+                })
         return usable
 
     def generate_q1(self):
