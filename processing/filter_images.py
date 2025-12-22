@@ -157,16 +157,13 @@ class ImageFilter:
             is_qwen3 = hasattr(self.model, 'config') and "qwen3" in str(self.model.config.__class__).lower()
             is_quantized = hasattr(self.model, 'config') and getattr(self.model.config, 'quantization_config', None) is not None
 
-            # 수정: Qwen3 조건문 삭제 -> else문으로 넘어가서 autocast가 켜지게 함
-            if is_quantized:
-                # Quantized models: Use full precision without autocast
+            # Qwen3: Disable autocast completely to prevent scatter dtype issues
+            if is_qwen3 or is_quantized:
+                # Qwen3 or quantized models: Use full precision without autocast
                 inference_context = torch.no_grad()
             else:
-                # Qwen3 및 기타 모델: Autocast 활성화 (scatter 오류 방지)
-                # Use model's dtype for autocast to ensure consistency
-                model_dtype = next(self.model.parameters()).dtype
-                autocast_dtype = torch.bfloat16 if model_dtype == torch.bfloat16 else torch.float16
-                inference_context = torch.cuda.amp.autocast(enabled=True, dtype=autocast_dtype) if torch.cuda.is_available() else torch.no_grad()
+                # Other models: Use autocast for efficiency
+                inference_context = torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16) if torch.cuda.is_available() else torch.no_grad()
 
             with torch.no_grad(), inference_context:
                 generate_kwargs = {

@@ -98,15 +98,15 @@ class PipelineRunner:
             if is_qwen3 and QWEN3_AVAILABLE:
                 # Try bfloat16 first, fallback to 8-bit quantization if needed
                 try:
-                    logger.info("Attempting to load Qwen3 with bfloat16 across GPUs...")
+                    logger.info("Attempting to load Qwen3 with float32 across GPUs...")
                     self.shared_model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
                         self.model_path,
-                        dtype=torch.bfloat16,
+                        dtype=torch.float32,  # Use float32 to prevent dtype issues
                         device_map=device_map,  # Use multi-GPU distribution
                         trust_remote_code=True,
                         low_cpu_mem_usage=True
                     )
-                    logger.info("Qwen3 loaded successfully with bfloat16")
+                    logger.info("Qwen3 loaded successfully with float32")
                 except RuntimeError as dtype_error:
                     if "scatter" in str(dtype_error).lower() or "dtype" in str(dtype_error).lower():
                         logger.warning(f"Dtype issue detected with bfloat16: {dtype_error}")
@@ -193,6 +193,16 @@ class PipelineRunner:
                 logger.warning(f"torch.compile failed (non-critical): {e}")
         else:
             logger.info("Skipping torch.compile for Qwen3 model (known dtype issues)")
+
+        # Force dtype consistency for Qwen3 models to prevent scatter errors
+        if is_qwen3:
+            logger.info("Ensuring dtype consistency for Qwen3 model...")
+            try:
+                # Convert all model parameters to float32 to prevent dtype mismatches
+                self.shared_model = self.shared_model.to(dtype=torch.float32)
+                logger.info("Qwen3 model converted to consistent float32 dtype")
+            except Exception as dtype_conv_error:
+                logger.warning(f"Failed to convert Qwen3 to float32: {dtype_conv_error}")
 
         logger.info("Shared model loaded successfully")
 
