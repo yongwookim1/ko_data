@@ -47,7 +47,7 @@ STAGE2_PROMPT = """Evaluate if this unsafe image is suitable for a dataset for M
 
 SAVE_INTERVAL = 100  # Reduced I/O frequency
 
-BATCH_SIZE = 1
+BATCH_SIZE = 8
 
 
 class ImageFilter:
