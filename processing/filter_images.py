@@ -1,3 +1,4 @@
+import gc
 import shutil
 import json
 import torch
@@ -6,7 +7,7 @@ from pathlib import Path
 from PIL import Image
 from transformers import AutoProcessor, AutoModel
 from tqdm import tqdm
-from config import IMAGE_DIR, CRAWLED_DIR, RESULTS_DIR, IMAGE_EXTENSIONS, FILTER_MODEL_PATH
+from config import CRAWLED_DIR, RESULTS_DIR, IMAGE_EXTENSIONS, FILTER_MODEL_PATH
 
 try:
     from transformers import Qwen3VLMoeForConditionalGeneration
@@ -45,14 +46,13 @@ STAGE2_PROMPT = """Evaluate if this unsafe image is suitable for a dataset for M
 {"is_usable": true/false, "quality_score": 1-5, "reason": "<brief_reason>"}
 """
 
-SAVE_INTERVAL = 100  # Reduced I/O frequency
-
-BATCH_SIZE = 2
+BATCH_SIZE = 16
+SAVE_INTERVAL = 100
+IMAGE_BATCH_SIZE = 20
+MAX_IMAGE_SIZE = 1024
 
 
 class ImageFilter:
-    """Filters images for unsafe content and categorizes them."""
-
     def __init__(self, source_dir=None, shared_model=None, shared_processor=None):
         self.source_dir = Path(source_dir) if source_dir else CRAWLED_DIR
         self.output_dir = self.source_dir / "filtered"
@@ -61,63 +61,46 @@ class ImageFilter:
         self.unsafe_unusable_dir = self.output_dir / "unsafe_unusable"
         self.log_file = RESULTS_DIR / "filtering_log.json"
         self.checkpoint_file = RESULTS_DIR / "filtering_checkpoint.json"
-
-        # Use shared model if provided to avoid reloading
         self.model = shared_model
         self.processor = shared_processor
 
     def setup(self):
-        self.safe_dir.mkdir(parents=True, exist_ok=True)
-        self.unsafe_usable_dir.mkdir(parents=True, exist_ok=True)
-        self.unsafe_unusable_dir.mkdir(parents=True, exist_ok=True)
+        for d in [self.safe_dir, self.unsafe_usable_dir, self.unsafe_unusable_dir]:
+            d.mkdir(parents=True, exist_ok=True)
 
     def cleanup_memory(self):
-        """Aggressive memory cleanup after inference."""
-        if hasattr(torch.cuda, 'empty_cache'):
-            torch.cuda.empty_cache()
-        import gc
+        torch.cuda.empty_cache()
         gc.collect()
 
     def load_model(self):
         if self.model is not None:
-            logger.info("Using shared model")
             return
 
         model_path = Path(FILTER_MODEL_PATH)
         if not model_path.exists():
-            raise FileNotFoundError(f"Model not found at: {FILTER_MODEL_PATH}")
-        logger.info(f"Loading model: {FILTER_MODEL_PATH}")
+            raise FileNotFoundError(f"Model not found: {FILTER_MODEL_PATH}")
 
         is_qwen3 = "qwen3" in FILTER_MODEL_PATH.lower()
-        if is_qwen3 and QWEN3_AVAILABLE:
-            self.model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
-                FILTER_MODEL_PATH,
-                torch_dtype=torch.bfloat16,
-                device_map="auto",
-                trust_remote_code=True
-            )
-        else:
-            self.model = AutoModel.from_pretrained(
-                FILTER_MODEL_PATH,
-                torch_dtype=torch.bfloat16,
-                device_map="auto",
-                trust_remote_code=True
-            )
-        self.processor = AutoProcessor.from_pretrained(
-            FILTER_MODEL_PATH, trust_remote_code=True
+        model_cls = Qwen3VLMoeForConditionalGeneration if is_qwen3 and QWEN3_AVAILABLE else AutoModel
+        self.model = model_cls.from_pretrained(
+            FILTER_MODEL_PATH,
+            torch_dtype=torch.bfloat16,
+            device_map="auto",
+            trust_remote_code=True,
+            attn_implementation="sdpa",
         )
-        logger.info("Model loaded successfully")
+        self.processor = AutoProcessor.from_pretrained(FILTER_MODEL_PATH, trust_remote_code=True)
+        logger.info("Model loaded")
 
     def load_checkpoint(self):
         if self.checkpoint_file.exists():
-            with open(self.checkpoint_file, "r") as f:
-                data = json.load(f)
-                return set(data.get("processed", []))
+            with open(self.checkpoint_file) as f:
+                return set(json.load(f).get("processed", []))
         return set()
 
-    def save_checkpoint(self, processed_files):
+    def save_checkpoint(self, processed):
         with open(self.checkpoint_file, "w") as f:
-            json.dump({"processed": list(processed_files)}, f)
+            json.dump({"processed": list(processed)}, f)
 
     def save_logs(self, logs):
         with open(self.log_file, "w", encoding="utf-8") as f:
@@ -131,8 +114,15 @@ class ImageFilter:
         except Exception:
             return False
 
-    def run_inference(self, image, prompt):
-        return self.run_inference_batch([(image, prompt)])[0]
+    def load_image(self, path):
+        image = Image.open(path).convert("RGB")
+        if max(image.size) > MAX_IMAGE_SIZE:
+            ratio = MAX_IMAGE_SIZE / max(image.size)
+            image = image.resize(
+                (int(image.width * ratio), int(image.height * ratio)),
+                Image.Resampling.LANCZOS
+            )
+        return image
 
     def run_inference_batch(self, image_prompt_pairs):
         if not image_prompt_pairs:
@@ -141,56 +131,37 @@ class ImageFilter:
         images, prompts = zip(*image_prompt_pairs)
         images = list(images)
 
-        messages_batch = []
-        for image, prompt in zip(images, prompts):
-            messages = [{"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": prompt}]}]
-            messages_batch.append(messages)
+        messages_batch = [
+            [{"role": "user", "content": [{"type": "image", "image": img}, {"type": "text", "text": p}]}]
+            for img, p in zip(images, prompts)
+        ]
+        texts = [
+            self.processor.apply_chat_template(m, tokenize=False, add_generation_prompt=True)
+            for m in messages_batch
+        ]
+        inputs = self.processor(text=texts, images=images, padding=True, return_tensors="pt")
+        inputs = inputs.to(self.model.device)
 
-        texts = [self.processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True)
-                for msg in messages_batch]
+        is_qwen3 = "qwen3" in str(type(self.model)).lower()
+        gen_kwargs = {
+            "max_new_tokens": 512,
+            "do_sample": False,
+            "pad_token_id": self.processor.tokenizer.eos_token_id,
+            "eos_token_id": self.processor.tokenizer.eos_token_id,
+        }
+        if not is_qwen3:
+            gen_kwargs["use_cache"] = True
 
-        inputs = self.processor(text=texts, images=images, padding=True, return_tensors="pt").to(self.model.device)
+        with torch.no_grad():
+            generated_ids = self.model.generate(**inputs, **gen_kwargs)
 
-        generated_ids = None
-        try:
-            # Check model type and quantization
-            is_qwen3 = hasattr(self.model, 'config') and "qwen3" in str(self.model.config.__class__).lower()
-            is_quantized = hasattr(self.model, 'config') and getattr(self.model.config, 'quantization_config', None) is not None
+        responses = []
+        for inp_ids, gen_ids in zip(inputs.input_ids, generated_ids):
+            trimmed = gen_ids[len(inp_ids):]
+            responses.append(self.processor.decode(trimmed, skip_special_tokens=True))
 
-            # Qwen3: Disable autocast completely to prevent scatter dtype issues
-            if is_qwen3 or is_quantized:
-                # Qwen3 or quantized models: Use full precision without autocast
-                inference_context = torch.no_grad()
-            else:
-                # Other models: Use autocast for efficiency
-                inference_context = torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16) if torch.cuda.is_available() else torch.no_grad()
-
-            with torch.no_grad(), inference_context:
-                generate_kwargs = {
-                    "max_new_tokens": 512,
-                    "do_sample": False,
-                    "pad_token_id": self.processor.tokenizer.eos_token_id,
-                    "eos_token_id": self.processor.tokenizer.eos_token_id,
-                }
-
-                # Add use_cache only for non-Qwen3 models
-                if not is_qwen3:
-                    generate_kwargs["use_cache"] = True
-
-                generated_ids = self.model.generate(**inputs, **generate_kwargs)
-
-                responses = []
-                for i, (inp_ids, gen_ids) in enumerate(zip(inputs.input_ids, generated_ids)):
-                    trimmed = gen_ids[len(inp_ids):]
-                    response = self.processor.decode(trimmed, skip_special_tokens=True)
-                    responses.append(response)
-        finally:
-            # Aggressive memory cleanup
-            del inputs
-            if generated_ids is not None:
-                del generated_ids
-            self.cleanup_memory()
-
+        del inputs, generated_ids
+        self.cleanup_memory()
         return responses
 
     def parse_json(self, text):
@@ -200,8 +171,7 @@ class ImageFilter:
             elif "```" in text:
                 text = text.split("```")[1].split("```")[0]
             return json.loads(text.strip())
-        except (json.JSONDecodeError, IndexError) as e:
-            logger.warning(f"JSON parse failed: {e}, raw: {text[:200]}")
+        except (json.JSONDecodeError, IndexError):
             return {"assessment": "safe"}
 
     def run(self):
@@ -209,138 +179,93 @@ class ImageFilter:
         self.load_model()
 
         processed = self.load_checkpoint()
-        logger.info(f"Checkpoint: {len(processed)} files already processed")
-
-        all_images = [f for f in self.source_dir.iterdir() if f.suffix.lower() in IMAGE_EXTENSIONS and f.is_file()]
+        all_images = [f for f in self.source_dir.iterdir()
+                      if f.suffix.lower() in IMAGE_EXTENSIONS and f.is_file()]
         images = [f for f in all_images if f.name not in processed]
-        logger.info(f"Found {len(all_images)} total, {len(images)} remaining")
+        logger.info(f"Processing {len(images)}/{len(all_images)} images")
 
         logs = []
         if self.log_file.exists():
-            with open(self.log_file, "r", encoding="utf-8") as f:
+            with open(self.log_file, encoding="utf-8") as f:
                 logs = json.load(f)
 
         stats = {"safe": 0, "unsafe_usable": 0, "unsafe_unusable": 0, "error": 0}
 
-        # Process images in smaller batches to prevent memory accumulation
-        IMAGE_BATCH_SIZE = 20
+        for batch_start in tqdm(range(0, len(images), IMAGE_BATCH_SIZE), desc="Filtering"):
+            batch = images[batch_start:batch_start + IMAGE_BATCH_SIZE]
 
-        for img_batch_start in tqdm(range(0, len(images), IMAGE_BATCH_SIZE), desc="Processing image batches"):
-            img_batch_end = min(img_batch_start + IMAGE_BATCH_SIZE, len(images))
-            current_img_batch = images[img_batch_start:img_batch_end]
-
-            # Load and validate images for current batch
-            valid_images = []
-            invalid_images = []
-
-            for img_path in current_img_batch:
+            # Validate and load images
+            image_objects, valid_paths = [], []
+            for img_path in batch:
                 if not self.is_valid_image(img_path):
-                    invalid_images.append(img_path)
-                else:
-                    valid_images.append(img_path)
-
-            # Process invalid images
-            for img_path in invalid_images:
-                entry = {"filename": img_path.name, "status": "invalid"}
-                shutil.copy(str(img_path), str(self.unsafe_unusable_dir / img_path.name))
-                logs.append(entry)
-                processed.add(img_path.name)
-                stats["error"] += 1
-
-            # Load images for current batch
-            image_objects = []
-            valid_paths = []
-            for img_path in valid_images:
+                    shutil.copy(str(img_path), str(self.unsafe_unusable_dir / img_path.name))
+                    logs.append({"filename": img_path.name, "status": "invalid"})
+                    processed.add(img_path.name)
+                    stats["error"] += 1
+                    continue
                 try:
-                    image = Image.open(img_path).convert("RGB")
-
-                    # Resize image to limit memory usage (max size: 1024px on longest side)
-                    max_size = 1024
-                    if max(image.size) > max_size:
-                        ratio = max_size / max(image.size)
-                        new_size = (int(image.width * ratio), int(image.height * ratio))
-                        image = image.resize(new_size, Image.Resampling.LANCZOS)
-                        logger.debug(f"Resized {img_path.name} from {image.size} to {new_size}")
-
-                    image_objects.append(image)
+                    image_objects.append(self.load_image(img_path))
                     valid_paths.append(img_path)
                 except Exception as e:
-                    logger.error(f"Error loading {img_path.name}: {e}")
-                    entry = {"filename": img_path.name, "error": str(e)}
-                    logs.append(entry)
+                    logs.append({"filename": img_path.name, "error": str(e)})
                     processed.add(img_path.name)
                     stats["error"] += 1
 
             if not image_objects:
                 continue
 
-            # Stage 1: Safety assessment
-            stage1_batch_tasks = [(img, STAGE1_PROMPT) for img in image_objects]
+            # Stage 1: Safety check
+            stage1_tasks = [(img, STAGE1_PROMPT) for img in image_objects]
             stage1_results = []
+            for i in range(0, len(stage1_tasks), BATCH_SIZE):
+                batch_resp = self.run_inference_batch(stage1_tasks[i:i + BATCH_SIZE])
+                stage1_results.extend([self.parse_json(r) for r in batch_resp])
 
-            for batch_start in range(0, len(stage1_batch_tasks), BATCH_SIZE):
-                batch_end = min(batch_start + BATCH_SIZE, len(stage1_batch_tasks))
-                current_batch = stage1_batch_tasks[batch_start:batch_end]
-                batch_responses = self.run_inference_batch(current_batch)
-                stage1_results.extend([self.parse_json(resp) for resp in batch_responses])
-
-            # Separate safe and unsafe images
-            safe_images = []
+            # Separate safe/unsafe
             unsafe_data = []
-
-            for img_path, image, stage1 in zip(valid_paths, image_objects, stage1_results):
-                entry = {"filename": img_path.name, "stage1": stage1}
-                is_unsafe = stage1.get("assessment") == "unsafe"
-
-                if not is_unsafe:
-                    shutil.copy(str(img_path), str(self.safe_dir / img_path.name))
+            for path, img, result in zip(valid_paths, image_objects, stage1_results):
+                entry = {"filename": path.name, "stage1": result}
+                if result.get("assessment") != "unsafe":
+                    shutil.copy(str(path), str(self.safe_dir / path.name))
                     entry["final"] = "safe"
                     stats["safe"] += 1
                     logs.append(entry)
-                    processed.add(img_path.name)
+                    processed.add(path.name)
                 else:
-                    unsafe_data.append((img_path, image, entry))
+                    unsafe_data.append((path, img, entry))
 
-            # Stage 2: Usability assessment for unsafe images
+            # Stage 2: Usability check for unsafe images
             if unsafe_data:
-                unsafe_paths, unsafe_images, unsafe_entries = zip(*unsafe_data)
-                stage2_batch_tasks = [(img, STAGE2_PROMPT) for img in unsafe_images]
+                paths, imgs, entries = zip(*unsafe_data)
+                stage2_tasks = [(img, STAGE2_PROMPT) for img in imgs]
                 stage2_results = []
+                for i in range(0, len(stage2_tasks), BATCH_SIZE):
+                    batch_resp = self.run_inference_batch(stage2_tasks[i:i + BATCH_SIZE])
+                    stage2_results.extend([self.parse_json(r) for r in batch_resp])
 
-                for batch_start in range(0, len(stage2_batch_tasks), BATCH_SIZE):
-                    batch_end = min(batch_start + BATCH_SIZE, len(stage2_batch_tasks))
-                    current_batch = stage2_batch_tasks[batch_start:batch_end]
-                    batch_responses = self.run_inference_batch(current_batch)
-                    stage2_results.extend([self.parse_json(resp) for resp in batch_responses])
-
-                for img_path, stage2, entry in zip(unsafe_paths, stage2_results, unsafe_entries):
-                    entry["stage2"] = stage2
-
-                    if stage2.get("is_usable"):
-                        shutil.copy(str(img_path), str(self.unsafe_usable_dir / img_path.name))
+                for path, result, entry in zip(paths, stage2_results, entries):
+                    entry["stage2"] = result
+                    if result.get("is_usable"):
+                        shutil.copy(str(path), str(self.unsafe_usable_dir / path.name))
                         entry["final"] = "unsafe_usable"
                         stats["unsafe_usable"] += 1
                     else:
-                        shutil.copy(str(img_path), str(self.unsafe_unusable_dir / img_path.name))
+                        shutil.copy(str(path), str(self.unsafe_unusable_dir / path.name))
                         entry["final"] = "unsafe_unusable"
                         stats["unsafe_unusable"] += 1
-
                     logs.append(entry)
-                    processed.add(img_path.name)
+                    processed.add(path.name)
 
-            # Memory cleanup
             del image_objects
             self.cleanup_memory()
 
-            # Save progress periodically
-            if (img_batch_start + IMAGE_BATCH_SIZE) % SAVE_INTERVAL == 0:
+            if (batch_start + IMAGE_BATCH_SIZE) % SAVE_INTERVAL == 0:
                 self.save_logs(logs)
                 self.save_checkpoint(processed)
-                logger.info(f"Saved at {len(processed)}/{len(all_images)} images")
 
         self.save_logs(logs)
         self.save_checkpoint(processed)
-        logger.info(f"Done: Safe={stats['safe']}, Usable={stats['unsafe_usable']}, Unusable={stats['unsafe_unusable']}, Errors={stats['error']}")
+        logger.info(f"Done: {stats}")
         return stats
 
 
