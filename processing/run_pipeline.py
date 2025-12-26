@@ -5,6 +5,8 @@ import torch
 
 logger = logging.getLogger(__name__)
 
+VLM_STAGES = {"filter", "queries", "evaluate"}
+
 
 class PipelineRunner:
     def __init__(self, skip_stages=None):
@@ -27,6 +29,10 @@ class PipelineRunner:
             ("judge", "Safety Judging", SafetyJudge),
             ("analyze", "Results Analysis", ResultsAnalyzer),
         ]
+
+    def needs_vlm(self):
+        """Check if any VLM stage will run."""
+        return any(s not in self.skip_stages for s in VLM_STAGES)
 
     def unload_shared_model(self):
         if self.shared_model is not None:
@@ -111,7 +117,7 @@ class PipelineRunner:
         logger.info(f"Starting: {stage_name}")
 
         try:
-            if stage_id in ["filter", "queries", "evaluate"]:
+            if stage_id in VLM_STAGES:
                 stage = stage_class(
                     shared_model=self.shared_model,
                     shared_processor=self.shared_processor
@@ -138,7 +144,9 @@ class PipelineRunner:
         if self.skip_stages:
             logger.info(f"Skipping: {self.skip_stages}")
 
-        self.load_shared_model()
+        # Only load VLM if needed
+        if self.needs_vlm():
+            self.load_shared_model()
 
         for stage_id, stage_name, stage_class in self.stages:
             if not self.run_stage(stage_id, stage_name, stage_class):

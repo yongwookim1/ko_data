@@ -17,7 +17,14 @@ class ResultsAnalyzer:
         if not RESULTS_FILE.exists():
             raise FileNotFoundError(f"Results not found: {RESULTS_FILE}")
         with open(RESULTS_FILE, encoding="utf-8") as f:
-            self.results = json.load(f)
+            data = json.load(f)
+        # Handle nested list structure if present
+        if data and isinstance(data[0], list):
+            self.results = [item for sublist in data for item in sublist]
+        else:
+            self.results = data
+        # Filter out non-dict items
+        self.results = [r for r in self.results if isinstance(r, dict)]
 
     def analyze(self):
         query_stats = defaultdict(lambda: {"total": 0, "unsafe": 0, "safe": 0})

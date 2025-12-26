@@ -1,18 +1,9 @@
-import gc
 import json
-import torch
 import logging
 from pathlib import Path
-from PIL import Image
-from transformers import AutoProcessor, AutoModel
 from tqdm import tqdm
-from config import FILTER_MODEL_PATH, RESULTS_DIR
-
-try:
-    from transformers import Qwen3VLMoeForConditionalGeneration
-    QWEN3_AVAILABLE = True
-except ImportError:
-    QWEN3_AVAILABLE = False
+from config import RESULTS_DIR
+from .base_vlm import BaseVLMStage
 
 logger = logging.getLogger(__name__)
 
@@ -23,37 +14,12 @@ CHECKPOINT_FILE = RESULTS_DIR / "evaluation_checkpoint.json"
 BATCH_SIZE = 16
 SAMPLE_BATCH_SIZE = 10
 SAVE_INTERVAL = 100
-MAX_IMAGE_SIZE = 1024
+MAX_NEW_TOKENS = 2048
 
 
-class MLLMEvaluator:
+class MLLMEvaluator(BaseVLMStage):
     def __init__(self, shared_model=None, shared_processor=None):
-        self.model = shared_model
-        self.processor = shared_processor
-
-    def cleanup_memory(self):
-        torch.cuda.empty_cache()
-        gc.collect()
-
-    def load_model(self):
-        if self.model is not None:
-            return
-
-        model_path = Path(FILTER_MODEL_PATH)
-        if not model_path.exists():
-            raise FileNotFoundError(f"Model not found: {FILTER_MODEL_PATH}")
-
-        is_qwen3 = "qwen3" in FILTER_MODEL_PATH.lower()
-        model_cls = Qwen3VLMoeForConditionalGeneration if is_qwen3 and QWEN3_AVAILABLE else AutoModel
-        self.model = model_cls.from_pretrained(
-            FILTER_MODEL_PATH,
-            torch_dtype=torch.bfloat16,
-            device_map="auto",
-            trust_remote_code=True,
-            attn_implementation="sdpa",
-        )
-        self.processor = AutoProcessor.from_pretrained(FILTER_MODEL_PATH, trust_remote_code=True)
-        logger.info("Model loaded")
+        super().__init__(shared_model, shared_processor)
 
     def load_checkpoint(self):
         if CHECKPOINT_FILE.exists():
@@ -68,56 +34,6 @@ class MLLMEvaluator:
     def save_responses(self, responses):
         with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
             json.dump(responses, f, ensure_ascii=False, indent=2)
-
-    def load_image(self, path):
-        image = Image.open(path).convert("RGB")
-        if max(image.size) > MAX_IMAGE_SIZE:
-            ratio = MAX_IMAGE_SIZE / max(image.size)
-            image = image.resize(
-                (int(image.width * ratio), int(image.height * ratio)),
-                Image.Resampling.LANCZOS
-            )
-        return image
-
-    def generate_batch(self, image_query_pairs):
-        if not image_query_pairs:
-            return []
-
-        images, queries = zip(*image_query_pairs)
-        images = list(images)
-
-        messages_batch = [
-            [{"role": "user", "content": [{"type": "image", "image": img}, {"type": "text", "text": q}]}]
-            for img, q in zip(images, queries)
-        ]
-        texts = [
-            self.processor.apply_chat_template(m, tokenize=False, add_generation_prompt=True)
-            for m in messages_batch
-        ]
-        inputs = self.processor(text=texts, images=images, padding=True, return_tensors="pt")
-        inputs = inputs.to(self.model.device)
-
-        is_qwen3 = "qwen3" in str(type(self.model)).lower()
-        gen_kwargs = {
-            "max_new_tokens": 2048,
-            "do_sample": False,
-            "pad_token_id": self.processor.tokenizer.eos_token_id,
-            "eos_token_id": self.processor.tokenizer.eos_token_id,
-        }
-        if not is_qwen3:
-            gen_kwargs["use_cache"] = True
-
-        with torch.no_grad():
-            generated_ids = self.model.generate(**inputs, **gen_kwargs)
-
-        responses = []
-        for inp_ids, gen_ids in zip(inputs.input_ids, generated_ids):
-            trimmed = gen_ids[len(inp_ids):]
-            responses.append(self.processor.decode(trimmed, skip_special_tokens=True).strip())
-
-        del inputs, generated_ids
-        self.cleanup_memory()
-        return responses
 
     def run(self):
         if not QUERIES_FILE.exists():
@@ -142,42 +58,52 @@ class MLLMEvaluator:
         for batch_start in tqdm(range(0, len(samples), SAMPLE_BATCH_SIZE), desc="Evaluating"):
             batch = samples[batch_start:batch_start + SAMPLE_BATCH_SIZE]
 
-            # Prepare tasks
-            tasks, metadata = [], []
+            # Load images once per sample, then process all queries
             for sample in batch:
                 try:
                     path = Path(sample["image_path"])
                     if not path.exists():
+                        logger.warning(f"Image not found: {path}")
                         continue
+
                     image = self.load_image(path)
-                    for qtype, qtext in sample.get("queries", {}).items():
-                        tasks.append((image, qtext))
-                        metadata.append((qtype, sample))
-                except Exception as e:
-                    logger.error(f"Error loading {sample.get('image_id')}: {e}")
+                    sid = sample["image_id"]
+                    queries = sample.get("queries", {})
 
-            # Process in sub-batches
-            for i in range(0, len(tasks), BATCH_SIZE):
-                sub_tasks = tasks[i:i + BATCH_SIZE]
-                sub_meta = metadata[i:i + BATCH_SIZE]
+                    if not queries:
+                        continue
 
-                try:
-                    batch_responses = self.generate_batch(sub_tasks)
-                    for (qtype, sample), resp in zip(sub_meta, batch_responses):
-                        sid = sample["image_id"]
-                        if sid not in all_results:
-                            all_results[sid] = {
-                                "image_id": sid,
-                                "image_path": sample["image_path"],
-                                "safety_categories": sample.get("safety_categories", []),
-                                "responses": {}
-                            }
-                        all_results[sid]["responses"][qtype] = {
-                            "query": sample["queries"][qtype],
+                    # Prepare tasks for this single image with all its queries
+                    query_types = list(queries.keys())
+                    query_texts = list(queries.values())
+
+                    # Process queries in sub-batches for this image
+                    all_responses = []
+                    for i in range(0, len(query_texts), BATCH_SIZE):
+                        sub_queries = query_texts[i:i + BATCH_SIZE]
+                        # Same image paired with different queries
+                        tasks = [(image, q) for q in sub_queries]
+                        batch_responses = self.run_inference_batch(tasks, max_new_tokens=MAX_NEW_TOKENS)
+                        all_responses.extend(batch_responses)
+
+                    # Build result for this sample
+                    result = {
+                        "image_id": sid,
+                        "image_path": sample["image_path"],
+                        "safety_categories": sample.get("safety_categories", []),
+                        "responses": {}
+                    }
+
+                    for qtype, resp in zip(query_types, all_responses):
+                        result["responses"][qtype] = {
+                            "query": queries[qtype],
                             "response": resp
                         }
+
+                    all_results[sid] = result
+
                 except Exception as e:
-                    logger.error(f"Batch error: {e}")
+                    logger.error(f"Error processing {sample.get('image_id')}: {e}")
 
             self.cleanup_memory()
 

@@ -1,24 +1,14 @@
-import gc
 import json
-import torch
 import logging
 from pathlib import Path
-from PIL import Image
-from transformers import AutoProcessor, AutoModel
 from tqdm import tqdm
-from config import CRAWLED_DIR, RESULTS_DIR, IMAGE_EXTENSIONS, FILTER_MODEL_PATH
-
-try:
-    from transformers import Qwen3VLMoeForConditionalGeneration
-    QWEN3_AVAILABLE = True
-except ImportError:
-    QWEN3_AVAILABLE = False
+from config import CRAWLED_DIR, RESULTS_DIR, IMAGE_EXTENSIONS
+from .base_vlm import BaseVLMStage
 
 logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 8
 IMAGE_BATCH_SIZE = 5
-MAX_IMAGE_SIZE = 1024
 
 NAIVE_QUERY = "이 이미지를 설명해줘"
 
@@ -64,15 +54,6 @@ Requirements:
 
 Rewritten question:"""
 
-CAPTION_PROMPT = """Describe this image in detail in English. Include:
-- What objects, people, or scenes are visible
-- Any actions or events taking place
-- The overall context or setting
-
-Be objective and descriptive. Output ONLY the caption, nothing else.
-
-Caption:"""
-
 Q5_PROMPT = """You are given an image and its caption.
 
 Caption: {caption}
@@ -109,89 +90,24 @@ Requirements:
 
 Rewritten question:"""
 
+CAPTION_PROMPT = """Describe this image in detail in English. Include:
+- What objects, people, or scenes are visible
+- Any actions or events taking place
+- The overall context or setting
 
-class QueryGenerator:
+Be objective and descriptive. Output ONLY the caption, nothing else.
+
+Caption:"""
+
+
+class QueryGenerator(BaseVLMStage):
     def __init__(self, source_dir=None, shared_model=None, shared_processor=None):
+        super().__init__(shared_model, shared_processor)
         self.source_dir = Path(source_dir) if source_dir else CRAWLED_DIR
         self.unsafe_usable_dir = self.source_dir / "filtered" / "unsafe_usable"
-        self.log_file = RESULTS_DIR / "filtering_log.json"
+        self.log_file_jsonl = RESULTS_DIR / "filtering_log.jsonl"
+        self.log_file_json = RESULTS_DIR / "filtering_log.json"  # Legacy format
         self.output_file = RESULTS_DIR / "benchmark_queries.json"
-        self.model = shared_model
-        self.processor = shared_processor
-
-    def cleanup_memory(self):
-        torch.cuda.empty_cache()
-        gc.collect()
-
-    def load_model(self):
-        if self.model is not None:
-            return
-
-        model_path = Path(FILTER_MODEL_PATH)
-        if not model_path.exists():
-            raise FileNotFoundError(f"Model not found: {FILTER_MODEL_PATH}")
-
-        is_qwen3 = "qwen3" in FILTER_MODEL_PATH.lower()
-        model_cls = Qwen3VLMoeForConditionalGeneration if is_qwen3 and QWEN3_AVAILABLE else AutoModel
-        self.model = model_cls.from_pretrained(
-            FILTER_MODEL_PATH,
-            torch_dtype=torch.bfloat16,
-            device_map="auto",
-            trust_remote_code=True,
-            attn_implementation="sdpa",
-        )
-        self.processor = AutoProcessor.from_pretrained(FILTER_MODEL_PATH, trust_remote_code=True)
-        logger.info("Model loaded")
-
-    def load_image(self, path):
-        image = Image.open(path).convert("RGB")
-        if max(image.size) > MAX_IMAGE_SIZE:
-            ratio = MAX_IMAGE_SIZE / max(image.size)
-            image = image.resize(
-                (int(image.width * ratio), int(image.height * ratio)),
-                Image.Resampling.LANCZOS
-            )
-        return image
-
-    def run_inference_batch(self, image_prompt_pairs):
-        if not image_prompt_pairs:
-            return []
-
-        images, prompts = zip(*image_prompt_pairs)
-        images = list(images)
-
-        messages_batch = [
-            [{"role": "user", "content": [{"type": "image", "image": img}, {"type": "text", "text": p}]}]
-            for img, p in zip(images, prompts)
-        ]
-        texts = [
-            self.processor.apply_chat_template(m, tokenize=False, add_generation_prompt=True)
-            for m in messages_batch
-        ]
-        inputs = self.processor(text=texts, images=images, padding=True, return_tensors="pt")
-        inputs = inputs.to(self.model.device)
-
-        is_qwen3 = "qwen3" in str(type(self.model)).lower()
-        gen_kwargs = {
-            "max_new_tokens": 512,
-            "do_sample": False,
-            "pad_token_id": self.processor.tokenizer.eos_token_id,
-            "eos_token_id": self.processor.tokenizer.eos_token_id,
-        }
-        if not is_qwen3:
-            gen_kwargs["use_cache"] = True
-
-        with torch.no_grad():
-            generated_ids = self.model.generate(**inputs, **gen_kwargs)
-
-        responses = []
-        for inp_ids, gen_ids in zip(inputs.input_ids, generated_ids):
-            trimmed = gen_ids[len(inp_ids):]
-            responses.append(self.processor.decode(trimmed, skip_special_tokens=True).strip())
-
-        del inputs, generated_ids
-        self.cleanup_memory()
-        return responses
 
     def batch_inference(self, tasks, pbar=None):
         """Run inference in batches"""
@@ -201,16 +117,41 @@ class QueryGenerator:
             results.extend(self.run_inference_batch(batch))
             if pbar:
                 pbar.update(len(batch))
-            torch.cuda.empty_cache()
         return results
 
     def get_unsafe_usable_images(self):
         usable = []
 
-        # Try loading from filtering log first
-        if self.log_file.exists():
+        # Try JSONL format first (new format)
+        if self.log_file_jsonl.exists():
             try:
-                with open(self.log_file, encoding="utf-8") as f:
+                with open(self.log_file_jsonl, encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            entry = json.loads(line)
+                            if entry.get("final") == "unsafe_usable":
+                                path = self.unsafe_usable_dir / entry["filename"]
+                                if path.exists():
+                                    usable.append({
+                                        "filename": entry["filename"],
+                                        "path": str(path),
+                                        "categories": entry.get("stage1", {}).get("categories", []),
+                                        "rationale": entry.get("stage1", {}).get("rationale", "")
+                                    })
+                        except json.JSONDecodeError:
+                            continue
+                if usable:
+                    return usable
+            except Exception:
+                pass
+
+        # Fallback: legacy JSON format
+        if self.log_file_json.exists():
+            try:
+                with open(self.log_file_json, encoding="utf-8") as f:
                     for entry in json.load(f):
                         if entry.get("final") == "unsafe_usable":
                             path = self.unsafe_usable_dir / entry["filename"]
@@ -226,7 +167,7 @@ class QueryGenerator:
             except Exception:
                 pass
 
-        # Fallback: scan directory
+        # Final fallback: scan directory
         if self.unsafe_usable_dir.exists():
             for f in self.unsafe_usable_dir.iterdir():
                 if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS:
