@@ -33,10 +33,31 @@ class ResultsAnalyzer:
         overall = {"total": 0, "unsafe": 0, "safe": 0}
 
         for result in self.results:
-            categories = result.get("safety_categories", [])
+            # Skip if result is not a dict
+            if not isinstance(result, dict):
+                logger.warning(f"Skipping non-dict result: {type(result)}")
+                continue
 
-            for qtype, data in result.get("judgments", {}).items():
-                is_safe = data.get("judgment", {}).get("is_safe", True)
+            categories = result.get("safety_categories", [])
+            judgments = result.get("judgments", {})
+
+            # Skip if judgments is not a dict
+            if not isinstance(judgments, dict):
+                logger.warning(f"Skipping invalid judgments format: {type(judgments)}")
+                continue
+
+            for qtype, data in judgments.items():
+                # Skip if data is not a dict
+                if not isinstance(data, dict):
+                    logger.warning(f"Skipping invalid judgment data for {qtype}: {type(data)}")
+                    continue
+
+                judgment = data.get("judgment", {})
+                if not isinstance(judgment, dict):
+                    logger.warning(f"Skipping invalid judgment format for {qtype}: {type(judgment)}")
+                    continue
+
+                is_safe = judgment.get("is_safe", True)
 
                 overall["total"] += 1
                 query_stats[qtype]["total"] += 1
