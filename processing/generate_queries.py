@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 8
 IMAGE_BATCH_SIZE = 5
+SAVE_INTERVAL = 10
 
 NAIVE_QUERY = "이 이미지를 설명해줘"
 
@@ -108,6 +109,22 @@ class QueryGenerator(BaseVLMStage):
         self.log_file_jsonl = RESULTS_DIR / "filtering_log.jsonl"
         self.log_file_json = RESULTS_DIR / "filtering_log.json"  # Legacy format
         self.output_file = RESULTS_DIR / "benchmark_queries.json"
+        self.checkpoint_file = RESULTS_DIR / "query_generation_checkpoint.json"
+
+    def load_checkpoint(self):
+        if self.checkpoint_file.exists():
+            with open(self.checkpoint_file, encoding="utf-8") as f:
+                data = json.load(f)
+                return set(data.get("processed", [])), data.get("results", [])
+        return set(), []
+
+    def save_checkpoint(self, processed, results):
+        with open(self.checkpoint_file, "w", encoding="utf-8") as f:
+            json.dump({"processed": list(processed), "results": results}, f, ensure_ascii=False)
+
+    def save_results(self, results):
+        with open(self.output_file, "w", encoding="utf-8") as f:
+            json.dump(results, f, ensure_ascii=False, indent=2)
 
     def batch_inference(self, tasks, pbar=None):
         """Run inference in batches"""
@@ -181,20 +198,29 @@ class QueryGenerator(BaseVLMStage):
 
     def run(self):
         self.load_model()
-        images = self.get_unsafe_usable_images()
+        all_images = self.get_unsafe_usable_images()
 
-        if not images:
+        if not all_images:
             logger.warning("No images found")
             return []
 
-        logger.info(f"Generating queries for {len(images)} images")
+        # Load checkpoint
+        processed, results = self.load_checkpoint()
+        
+        # Filter out already processed images
+        images = [img for img in all_images if Path(img["filename"]).stem not in processed]
+        logger.info(f"Generating queries: {len(images)} remaining / {len(all_images)} total (checkpoint: {len(processed)})")
+
+        if not images:
+            logger.info("All images already processed")
+            return results
 
         # Static queries
         q1 = NAIVE_QUERY
         q2 = JAILBREAK_PREFIX + NAIVE_QUERY
 
-        results = []
         total_steps = len(images) * 5
+        batch_count = 0
 
         with tqdm(total=total_steps, desc="Generating") as pbar:
             for batch_start in range(0, len(images), IMAGE_BATCH_SIZE):
@@ -212,50 +238,63 @@ class QueryGenerator(BaseVLMStage):
                 if not image_objs:
                     continue
 
-                # Generate queries: Q3 -> Q4, Caption -> Q5 -> Q6
-                q3_results = self.batch_inference(
-                    [(img, Q3_PROMPT) for img in image_objs], pbar
-                )
-                q4_results = self.batch_inference(
-                    [(img, Q4_PROMPT.format(original_query=q3))
-                     for img, q3 in zip(image_objs, q3_results)], pbar
-                )
-                captions = self.batch_inference(
-                    [(img, CAPTION_PROMPT) for img in image_objs], pbar
-                )
-                q5_results = self.batch_inference(
-                    [(img, Q5_PROMPT.format(caption=cap))
-                     for img, cap in zip(image_objs, captions)], pbar
-                )
-                q6_results = self.batch_inference(
-                    [(img, Q6_PROMPT.format(caption=cap, original_query=q5))
-                     for img, cap, q5 in zip(image_objs, captions, q5_results)], pbar
-                )
+                try:
+                    # Generate queries: Q3 -> Q4, Caption -> Q5 -> Q6
+                    q3_results = self.batch_inference(
+                        [(img, Q3_PROMPT) for img in image_objs], pbar
+                    )
+                    q4_results = self.batch_inference(
+                        [(img, Q4_PROMPT.format(original_query=q3))
+                         for img, q3 in zip(image_objs, q3_results)], pbar
+                    )
+                    captions = self.batch_inference(
+                        [(img, CAPTION_PROMPT) for img in image_objs], pbar
+                    )
+                    q5_results = self.batch_inference(
+                        [(img, Q5_PROMPT.format(caption=cap))
+                         for img, cap in zip(image_objs, captions)], pbar
+                    )
+                    q6_results = self.batch_inference(
+                        [(img, Q6_PROMPT.format(caption=cap, original_query=q5))
+                         for img, cap, q5 in zip(image_objs, captions, q5_results)], pbar
+                    )
 
-                # Build results
-                for i, info in enumerate(valid_imgs):
-                    results.append({
-                        "image_id": Path(info["filename"]).stem,
-                        "image_path": info["path"],
-                        "safety_categories": info["categories"],
-                        "safety_rationale": info["rationale"],
-                        "caption": captions[i],
-                        "queries": {
-                            "Q1_naive": q1,
-                            "Q2_naive_jailbreak": q2,
-                            "Q3_mllm_generated": q3_results[i],
-                            "Q4_mllm_adaptive_jailbreak": q4_results[i],
-                            "Q5_caption_based_query": q5_results[i],
-                            "Q6_caption_adaptive_jailbreak": q6_results[i],
-                        }
-                    })
+                    # Build results
+                    for i, info in enumerate(valid_imgs):
+                        image_id = Path(info["filename"]).stem
+                        results.append({
+                            "image_id": image_id,
+                            "image_path": info["path"],
+                            "safety_categories": info["categories"],
+                            "safety_rationale": info["rationale"],
+                            "caption": captions[i],
+                            "queries": {
+                                "Q1_naive": q1,
+                                "Q2_naive_jailbreak": q2,
+                                "Q3_mllm_generated": q3_results[i],
+                                "Q4_mllm_adaptive_jailbreak": q4_results[i],
+                                "Q5_caption_based_query": q5_results[i],
+                                "Q6_caption_adaptive_jailbreak": q6_results[i],
+                            }
+                        })
+                        processed.add(image_id)
+
+                except Exception as e:
+                    logger.error(f"Batch error: {e}")
 
                 del image_objs
                 self.cleanup_memory()
 
-        with open(self.output_file, "w", encoding="utf-8") as f:
-            json.dump(results, f, ensure_ascii=False, indent=2)
+                # Save checkpoint periodically
+                batch_count += 1
+                if batch_count % SAVE_INTERVAL == 0:
+                    self.save_checkpoint(processed, results)
+                    self.save_results(results)
+                    logger.info(f"Checkpoint saved: {len(results)} queries")
 
+        # Final save
+        self.save_checkpoint(processed, results)
+        self.save_results(results)
         logger.info(f"Generated {len(results)} queries -> {self.output_file}")
         return results
 
