@@ -7,9 +7,9 @@ from .base_vlm import BaseVLMStage
 
 logger = logging.getLogger(__name__)
 
-BATCH_SIZE = 8
-IMAGE_BATCH_SIZE = 5
-SAVE_INTERVAL = 10
+BATCH_SIZE = 16
+IMAGE_BATCH_SIZE = 10
+SAVE_INTERVAL = 20
 
 NAIVE_QUERY = "이 이미지를 설명해줘"
 

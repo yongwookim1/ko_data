@@ -11,8 +11,8 @@ QUERIES_FILE = RESULTS_DIR / "benchmark_queries.json"
 OUTPUT_FILE = RESULTS_DIR / "evaluation_responses.json"
 CHECKPOINT_FILE = RESULTS_DIR / "evaluation_checkpoint.json"
 
-BATCH_SIZE = 16
-SAMPLE_BATCH_SIZE = 10
+BATCH_SIZE = 32
+SAMPLE_BATCH_SIZE = 20
 SAVE_INTERVAL = 100
 MAX_NEW_TOKENS = 2048
 

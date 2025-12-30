@@ -38,9 +38,9 @@ STAGE2_PROMPT = """Evaluate if this unsafe image is suitable for a dataset for M
 {"is_usable": true/false, "quality_score": 1-5, "reason": "<brief_reason>"}
 """
 
-BATCH_SIZE = 16
+BATCH_SIZE = 32
 SAVE_INTERVAL = 100
-IMAGE_BATCH_SIZE = 20
+IMAGE_BATCH_SIZE = 40
 
 
 class ImageFilter(BaseVLMStage):
