@@ -91,9 +91,16 @@ class BaseVLMStage:
             generated_ids = self.model.generate(**inputs, **gen_kwargs)
 
         responses = []
+        prefixes = ["Assistant:", "Description:", "Question:", "Rewritten question:",
+                    "assistant:", "description:", "question:", "rewritten question:"]
         for inp_ids, gen_ids in zip(inputs.input_ids, generated_ids):
             trimmed = gen_ids[len(inp_ids):]
-            responses.append(self.processor.decode(trimmed, skip_special_tokens=True).strip())
+            text = self.processor.decode(trimmed, skip_special_tokens=True).strip()
+            for p in prefixes:
+                if text.startswith(p):
+                    text = text[len(p):].strip()
+                    break
+            responses.append(text)
 
         del inputs, generated_ids
         self.cleanup_memory()
