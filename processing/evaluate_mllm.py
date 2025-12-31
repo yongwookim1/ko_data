@@ -37,10 +37,15 @@ class MLLMEvaluator(BaseVLMStage):
 
     def run(self):
         if not QUERIES_FILE.exists():
-            raise FileNotFoundError(f"Queries not found: {QUERIES_FILE}")
+            logger.warning(f"Queries file not found: {QUERIES_FILE}. Skipping evaluation.")
+            return
 
         with open(QUERIES_FILE, encoding="utf-8") as f:
             queries_data = json.load(f)
+
+        if not queries_data:
+            logger.warning("No queries to evaluate. Skipping.")
+            return
 
         self.load_model()
         processed = self.load_checkpoint()

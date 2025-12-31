@@ -67,7 +67,7 @@ class QueryGenerator:
         self.filtered_dir = self.source_dir / "filtered"
         self.unsafe_usable_dir = self.filtered_dir / "unsafe_usable"
         self.log_file = RESULTS_DIR / "filtering_log.jsonl"
-        self.output_file = self.filtered_dir / "benchmark_queries.json"
+        self.output_file = RESULTS_DIR / "benchmark_queries.json"
         self.model = None
         self.processor = None
 
@@ -109,7 +109,8 @@ class QueryGenerator:
 
     def load_filtering_log(self):
         if not self.log_file.exists():
-            raise FileNotFoundError(f"Filtering log not found: {self.log_file}")
+            logger.warning(f"Filtering log not found: {self.log_file}")
+            return []
         logs = []
         with open(self.log_file, "r", encoding="utf-8") as f:
             for line in f:
@@ -154,12 +155,13 @@ class QueryGenerator:
             json.dump(results, f, ensure_ascii=False, indent=2)
 
     def run(self, save_interval=10):
-        self.load_model()
         images = self.get_unsafe_usable_images()
         
         if not images:
-            logger.warning("No unsafe_usable images found")
+            logger.warning("No unsafe_usable images found. Skipping query generation.")
             return []
+        
+        self.load_model()
 
         logger.info(f"Generating queries for {len(images)} images")
         results = []

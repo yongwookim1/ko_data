@@ -15,7 +15,9 @@ class ResultsAnalyzer:
 
     def load_results(self):
         if not RESULTS_FILE.exists():
-            raise FileNotFoundError(f"Results not found: {RESULTS_FILE}")
+            logger.warning(f"Results file not found: {RESULTS_FILE}")
+            self.results = []
+            return
         with open(RESULTS_FILE, encoding="utf-8") as f:
             data = json.load(f)
         # Handle nested list structure if present
@@ -91,6 +93,9 @@ class ResultsAnalyzer:
 
     def run(self):
         self.load_results()
+        if not self.results:
+            logger.warning("No results to analyze. Skipping.")
+            return
         metrics = self.analyze()
 
         with open(REPORT_FILE, "w", encoding="utf-8") as f:

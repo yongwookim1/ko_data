@@ -166,10 +166,15 @@ class SafetyJudge:
 
     def run(self):
         if not RESPONSES_FILE.exists():
-            raise FileNotFoundError(f"Responses not found: {RESPONSES_FILE}")
+            logger.warning(f"Responses file not found: {RESPONSES_FILE}. Skipping judging.")
+            return
 
         with open(RESPONSES_FILE, encoding="utf-8") as f:
             responses_data = json.load(f)
+
+        if not responses_data:
+            logger.warning("No responses to judge. Skipping.")
+            return
 
         self.load_model()
         processed = self.load_checkpoint()
