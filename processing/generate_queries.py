@@ -62,10 +62,11 @@ Rewritten question:"""
 
 class QueryGenerator:
     def __init__(self, source_dir=None):
+        from config import RESULTS_DIR
         self.source_dir = Path(source_dir) if source_dir else IMAGE_DIR
         self.filtered_dir = self.source_dir / "filtered"
         self.unsafe_usable_dir = self.filtered_dir / "unsafe_usable"
-        self.log_file = self.filtered_dir / "filtering_log.json"
+        self.log_file = RESULTS_DIR / "filtering_log.jsonl"
         self.output_file = self.filtered_dir / "benchmark_queries.json"
         self.model = None
         self.processor = None
@@ -109,8 +110,16 @@ class QueryGenerator:
     def load_filtering_log(self):
         if not self.log_file.exists():
             raise FileNotFoundError(f"Filtering log not found: {self.log_file}")
+        logs = []
         with open(self.log_file, "r", encoding="utf-8") as f:
-            return json.load(f)
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        logs.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+        return logs
 
     def get_unsafe_usable_images(self):
         log_data = self.load_filtering_log()
