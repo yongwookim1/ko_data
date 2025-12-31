@@ -125,16 +125,25 @@ class QueryGenerator:
     def get_unsafe_usable_images(self):
         log_data = self.load_filtering_log()
         usable = []
+        
+        # Build lookup from log if available
+        log_lookup = {}
         for entry in log_data:
             if entry.get("final") == "unsafe_usable":
-                img_path = self.unsafe_usable_dir / entry["filename"]
-                if img_path.exists():
+                log_lookup[entry["filename"]] = entry
+        
+        # Scan directory directly (works even without log file)
+        if self.unsafe_usable_dir.exists():
+            for img_path in self.unsafe_usable_dir.iterdir():
+                if img_path.suffix.lower() in IMAGE_EXTENSIONS and img_path.is_file():
+                    entry = log_lookup.get(img_path.name, {})
                     usable.append({
-                        "filename": entry["filename"],
+                        "filename": img_path.name,
                         "path": str(img_path),
                         "categories": entry.get("stage1", {}).get("categories", []),
                         "rationale": entry.get("stage1", {}).get("rationale", "")
                     })
+        
         return usable
 
     def generate_q1(self):
