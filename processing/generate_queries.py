@@ -5,7 +5,7 @@ from pathlib import Path
 from PIL import Image
 from transformers import AutoProcessor, AutoModel
 from tqdm import tqdm
-from config import IMAGE_DIR, IMAGE_EXTENSIONS, FILTER_MODEL_PATH
+from config import IMAGE_EXTENSIONS, FILTER_MODEL_PATH
 
 try:
     from transformers import Qwen3VLMoeForConditionalGeneration
@@ -62,8 +62,8 @@ Rewritten question:"""
 
 class QueryGenerator:
     def __init__(self, source_dir=None):
-        from config import RESULTS_DIR
-        self.source_dir = Path(source_dir) if source_dir else IMAGE_DIR
+        from config import RESULTS_DIR, CRAWLED_DIR
+        self.source_dir = Path(source_dir) if source_dir else CRAWLED_DIR
         self.filtered_dir = self.source_dir / "filtered"
         self.unsafe_usable_dir = self.filtered_dir / "unsafe_usable"
         self.log_file = RESULTS_DIR / "filtering_log.jsonl"
