@@ -5,7 +5,7 @@ import torch
 
 logger = logging.getLogger(__name__)
 
-VLM_STAGES = {"filter", "queries", "evaluate"}
+VLM_STAGES = {"filter", "evaluate"}
 
 
 class PipelineRunner:

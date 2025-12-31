@@ -75,7 +75,7 @@ class QueryGenerator:
         if not model_path.exists():
             raise FileNotFoundError(f"Model not found at: {FILTER_MODEL_PATH}")
         logger.info(f"Loading model: {FILTER_MODEL_PATH}")
-        
+
         is_qwen3 = "qwen3" in FILTER_MODEL_PATH.lower()
         if is_qwen3 and QWEN3_AVAILABLE:
             self.model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
