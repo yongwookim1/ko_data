@@ -140,7 +140,11 @@ class QueryGenerator:
         prompt = Q4_GENERATION_PROMPT.format(original_query=q3_query)
         return self.run_inference(image, prompt)
 
-    def run(self):
+    def save_results(self, results):
+        with open(self.output_file, "w", encoding="utf-8") as f:
+            json.dump(results, f, ensure_ascii=False, indent=2)
+
+    def run(self, save_interval=10):
         self.load_model()
         images = self.get_unsafe_usable_images()
         
@@ -151,7 +155,7 @@ class QueryGenerator:
         logger.info(f"Generating queries for {len(images)} images")
         results = []
 
-        for img_info in tqdm(images, desc="Generating queries"):
+        for idx, img_info in enumerate(tqdm(images, desc="Generating queries"), 1):
             try:
                 image = Image.open(img_info["path"]).convert("RGB")
                 
@@ -174,13 +178,15 @@ class QueryGenerator:
                 }
                 results.append(result)
                 
+                if idx % save_interval == 0:
+                    self.save_results(results)
+                    logger.info(f"Saved checkpoint: {len(results)} images")
+                
             except Exception as e:
                 logger.error(f"Error processing {img_info['filename']}: {e}")
                 continue
 
-        with open(self.output_file, "w", encoding="utf-8") as f:
-            json.dump(results, f, ensure_ascii=False, indent=2)
-        
+        self.save_results(results)
         logger.info(f"Generated queries for {len(results)} images. Saved to {self.output_file}")
         return results
 
