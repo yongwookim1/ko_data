@@ -63,35 +63,49 @@ class MLLMEvaluator(BaseVLMStage):
         for batch_start in tqdm(range(0, len(samples), SAMPLE_BATCH_SIZE), desc="Evaluating"):
             batch = samples[batch_start:batch_start + SAMPLE_BATCH_SIZE]
 
-            # Load images once per sample, then process all queries
             for sample in batch:
                 try:
+                    sid = sample["image_id"]
                     path = Path(sample["image_path"])
+                    
+                    logger.info(f"[{sid}] Processing sample")
+                    
                     if not path.exists():
-                        logger.warning(f"Image not found: {path}")
+                        logger.warning(f"[{sid}] Image not found: {path}")
                         continue
 
                     image = self.load_image(path)
-                    sid = sample["image_id"]
                     queries = sample.get("queries", {})
 
                     if not queries:
+                        logger.warning(f"[{sid}] No queries found")
                         continue
 
-                    # Prepare tasks for this single image with all its queries
                     query_types = list(queries.keys())
                     query_texts = list(queries.values())
+                    logger.info(f"[{sid}] Processing {len(query_types)} queries: {query_types}")
 
-                    # Process queries in sub-batches for this image
                     all_responses = []
                     for i in range(0, len(query_texts), BATCH_SIZE):
                         sub_queries = query_texts[i:i + BATCH_SIZE]
-                        # Same image paired with different queries
                         tasks = [(image, q) for q in sub_queries]
+                        
+                        logger.info(f"[{sid}] Running inference batch {i//BATCH_SIZE + 1} ({len(sub_queries)} queries)")
                         batch_responses = self.run_inference_batch(tasks, max_new_tokens=MAX_NEW_TOKENS)
+                        
+                        if batch_responses is None:
+                            logger.error(f"[{sid}] Batch inference returned None")
+                            batch_responses = ["[ERROR_NO_RESPONSE]"] * len(sub_queries)
+                        elif len(batch_responses) != len(sub_queries):
+                            logger.error(f"[{sid}] Response count mismatch: expected {len(sub_queries)}, got {len(batch_responses)}")
+                            batch_responses = batch_responses + ["[ERROR_MISSING_RESPONSE]"] * (len(sub_queries) - len(batch_responses))
+                        
                         all_responses.extend(batch_responses)
 
-                    # Build result for this sample
+                    if len(all_responses) != len(query_types):
+                        logger.error(f"[{sid}] Total response mismatch: expected {len(query_types)}, got {len(all_responses)}")
+                        continue
+
                     result = {
                         "image_id": sid,
                         "image_path": sample["image_path"],
@@ -99,27 +113,37 @@ class MLLMEvaluator(BaseVLMStage):
                         "responses": {}
                     }
 
+                    empty_count = 0
                     for qtype, resp in zip(query_types, all_responses):
+                        if resp is None or (isinstance(resp, str) and not resp.strip()):
+                            logger.warning(f"[{sid}] Empty response for query: {qtype}")
+                            resp = "[EMPTY_RESPONSE]"
+                            empty_count += 1
+                        
                         result["responses"][qtype] = {
                             "query": queries[qtype],
                             "response": resp
                         }
 
                     all_results[sid] = result
+                    logger.info(f"[{sid}] Success: {len(query_types)} queries, {empty_count} empty responses")
 
                 except Exception as e:
-                    logger.error(f"Error processing {sample.get('image_id')}: {e}")
+                    logger.error(f"[{sample.get('image_id', 'UNKNOWN')}] Exception: {e}", exc_info=True)
 
             self.cleanup_memory()
 
         # Save results
+        logger.info(f"Saving results for {len(all_results)} samples")
         for sid, result in all_results.items():
             responses.append(result)
             processed.add(sid)
 
         self.save_responses(responses)
         self.save_checkpoint(processed)
-        logger.info(f"Done: {len(responses)} responses")
+        
+        total_queries = sum(len(r.get("responses", {})) for r in responses)
+        logger.info(f"Done: {len(responses)} samples, {total_queries} total query responses")
 
 
 if __name__ == "__main__":

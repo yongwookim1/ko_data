@@ -9,7 +9,7 @@ VLM_STAGES = {"filter", "evaluate"}
 
 
 class PipelineRunner:
-    def __init__(self, skip_stages=None):
+    def __init__(self, skip_stages=None, force_queries=False):
         from .filter_images import ImageFilter
         from .generate_queries import QueryGenerator
         from .evaluate_mllm import MLLMEvaluator
@@ -18,6 +18,7 @@ class PipelineRunner:
         from config import FILTER_MODEL_PATH
 
         self.skip_stages = skip_stages or []
+        self.force_queries = force_queries
         self.model_path = FILTER_MODEL_PATH
         self.shared_model = None
         self.shared_processor = None
@@ -124,7 +125,12 @@ class PipelineRunner:
                 )
             else:
                 stage = stage_class()
-            stage.run()
+            
+            if stage_id == "queries":
+                stage.run(force=self.force_queries)
+            else:
+                stage.run()
+            
             logger.info(f"Completed: {stage_name}")
 
             # Unload VLM after evaluation, before judge (which uses text-only model)
@@ -162,6 +168,11 @@ def main():
     parser.add_argument(
         "--skip", nargs="+",
         choices=["filter", "queries", "evaluate", "judge", "analyze"],
+        help="Skip specified stages"
+    )
+    parser.add_argument(
+        "--force-queries", action="store_true",
+        help="Force regeneration of queries even if they already exist"
     )
     args = parser.parse_args()
 
@@ -171,7 +182,7 @@ def main():
         datefmt='%Y-%m-%d %H:%M:%S'
     )
 
-    PipelineRunner(skip_stages=args.skip or []).run()
+    PipelineRunner(skip_stages=args.skip or [], force_queries=args.force_queries).run()
 
 
 if __name__ == "__main__":
