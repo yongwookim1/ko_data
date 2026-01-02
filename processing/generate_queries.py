@@ -224,18 +224,7 @@ class QueryGenerator:
         with open(self.output_file, "w", encoding="utf-8") as f:
             json.dump(results, f, ensure_ascii=False, indent=2)
 
-    def run(self, save_interval=10, force=False):
-        if not force and self.output_file.exists():
-            try:
-                with open(self.output_file, "r", encoding="utf-8") as f:
-                    existing_results = json.load(f)
-                if existing_results:
-                    logger.info(f"Found existing queries file with {len(existing_results)} entries. Skipping query generation.")
-                    logger.info(f"Use force=True to regenerate queries.")
-                    return existing_results
-            except (json.JSONDecodeError, Exception) as e:
-                logger.warning(f"Failed to load existing queries: {e}. Regenerating...")
-        
+    def run(self, save_interval=10):
         images = self.get_unsafe_usable_images()
         
         if not images:
