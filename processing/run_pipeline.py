@@ -5,7 +5,7 @@ import torch
 
 logger = logging.getLogger(__name__)
 
-VLM_STAGES = {"filter", "evaluate"}
+VLM_STAGES = {"filter", "evaluate", "queries"}
 
 
 class PipelineRunner:
@@ -136,7 +136,7 @@ class PipelineRunner:
             logger.warning(f"Interrupted: {stage_name}")
             return False
         except Exception as e:
-            logger.error(f"Error in {stage_name}: {e}")
+            logger.error(f"Error in {stage_name}: {e}", exc_info=True)
             return False
 
     def run(self):

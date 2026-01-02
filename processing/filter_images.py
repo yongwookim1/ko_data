@@ -141,6 +141,10 @@ class ImageFilter(BaseVLMStage):
                 batch_resp = self.run_inference_batch(stage1_tasks[i:i + BATCH_SIZE])
                 stage1_results.extend([self.parse_json(r, {"assessment": "safe"}) for r in batch_resp])
 
+            # Pad if results are fewer than expected
+            while len(stage1_results) < len(valid_paths):
+                stage1_results.append({"assessment": "safe", "error": "missing_response"})
+
             # Separate safe/unsafe
             unsafe_data = []
             for path, img, result in zip(valid_paths, image_objects, stage1_results):
@@ -162,6 +166,10 @@ class ImageFilter(BaseVLMStage):
                 for i in range(0, len(stage2_tasks), BATCH_SIZE):
                     batch_resp = self.run_inference_batch(stage2_tasks[i:i + BATCH_SIZE])
                     stage2_results.extend([self.parse_json(r, {"is_usable": False}) for r in batch_resp])
+
+                # Pad if results are fewer than expected
+                while len(stage2_results) < len(paths):
+                    stage2_results.append({"is_usable": False, "error": "missing_response"})
 
                 for path, result, entry in zip(paths, stage2_results, entries):
                     entry["stage2"] = result

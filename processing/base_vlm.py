@@ -90,10 +90,14 @@ class BaseVLMStage:
         with torch.no_grad():
             generated_ids = self.model.generate(**inputs, **gen_kwargs)
 
+        # Validate output length matches input
+        if len(generated_ids) != len(inputs.input_ids):
+            logger.warning(f"Batch size mismatch: input {len(inputs.input_ids)}, output {len(generated_ids)}")
+
         responses = []
         prefixes = ["Assistant:", "Description:", "Question:", "Rewritten question:",
                     "assistant:", "description:", "question:", "rewritten question:"]
-        for inp_ids, gen_ids in zip(inputs.input_ids, generated_ids):
+        for i, (inp_ids, gen_ids) in enumerate(zip(inputs.input_ids, generated_ids)):
             trimmed = gen_ids[len(inp_ids):]
             text = self.processor.decode(trimmed, skip_special_tokens=True).strip()
             for p in prefixes:
@@ -101,6 +105,10 @@ class BaseVLMStage:
                     text = text[len(p):].strip()
                     break
             responses.append(text)
+
+        # Pad with error markers if responses are fewer than inputs
+        while len(responses) < len(image_prompt_pairs):
+            responses.append("[ERROR_GENERATION_FAILED]")
 
         del inputs, generated_ids
         self.cleanup_memory()

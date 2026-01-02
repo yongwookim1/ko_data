@@ -11,9 +11,8 @@ QUERIES_FILE = RESULTS_DIR / "benchmark_queries.json"
 OUTPUT_FILE = RESULTS_DIR / "evaluation_responses.json"
 CHECKPOINT_FILE = RESULTS_DIR / "evaluation_checkpoint.json"
 
-BATCH_SIZE = 32
-SAMPLE_BATCH_SIZE = 20
-SAVE_INTERVAL = 100
+BATCH_SIZE = 4
+SAVE_INTERVAL = 10
 MAX_NEW_TOKENS = 2048
 
 
@@ -58,87 +57,88 @@ class MLLMEvaluator(BaseVLMStage):
         samples = [s for s in queries_data if s.get("image_id") not in processed]
         logger.info(f"Processing {len(samples)}/{len(queries_data)} samples")
 
-        all_results = {}
+        for idx, sample in enumerate(tqdm(samples, desc="Evaluating"), 1):
+            try:
+                sid = sample["image_id"]
+                path = Path(sample["image_path"])
+                
+                if not path.exists():
+                    logger.warning(f"[{sid}] Image not found: {path}")
+                    continue
 
-        for batch_start in tqdm(range(0, len(samples), SAMPLE_BATCH_SIZE), desc="Evaluating"):
-            batch = samples[batch_start:batch_start + SAMPLE_BATCH_SIZE]
+                image = self.load_image(path)
+                queries = sample.get("queries", {})
 
-            for sample in batch:
-                try:
-                    sid = sample["image_id"]
-                    path = Path(sample["image_path"])
+                if not queries:
+                    logger.warning(f"[{sid}] No queries found")
+                    continue
+
+                query_types = list(queries.keys())
+                query_texts = list(queries.values())
+                
+                # Batch process all queries for this image
+                tasks = [(image, q) for q in query_texts]
+                
+                logger.info(f"[{sid}] Processing {len(query_types)} queries in batches of {BATCH_SIZE}")
+                
+                all_responses = []
+                for i in range(0, len(tasks), BATCH_SIZE):
+                    batch_tasks = tasks[i:i + BATCH_SIZE]
+                    batch_types = query_types[i:i + BATCH_SIZE]
                     
-                    logger.info(f"[{sid}] Processing sample")
+                    logger.info(f"[{sid}] Batch {i//BATCH_SIZE + 1}: {batch_types}")
+                    batch_responses = self.run_inference_batch(batch_tasks, max_new_tokens=MAX_NEW_TOKENS)
                     
-                    if not path.exists():
-                        logger.warning(f"[{sid}] Image not found: {path}")
-                        continue
+                    if batch_responses is None:
+                        logger.error(f"[{sid}] Batch inference returned None")
+                        batch_responses = ["[ERROR_NO_RESPONSE]"] * len(batch_tasks)
+                    elif len(batch_responses) != len(batch_tasks):
+                        logger.error(f"[{sid}] Response mismatch: expected {len(batch_tasks)}, got {len(batch_responses)}")
+                        batch_responses = batch_responses + ["[ERROR_MISSING_RESPONSE]"] * (len(batch_tasks) - len(batch_responses))
+                    
+                    all_responses.extend(batch_responses)
 
-                    image = self.load_image(path)
-                    queries = sample.get("queries", {})
+                if len(all_responses) != len(query_types):
+                    logger.warning(f"[{sid}] Response mismatch: expected {len(query_types)}, got {len(all_responses)}")
+                    # Pad with error markers instead of skipping
+                    while len(all_responses) < len(query_types):
+                        all_responses.append("[ERROR_MISSING_RESPONSE]")
 
-                    if not queries:
-                        logger.warning(f"[{sid}] No queries found")
-                        continue
+                result = {
+                    "image_id": sid,
+                    "image_path": sample["image_path"],
+                    "safety_categories": sample.get("safety_categories", []),
+                    "responses": {}
+                }
 
-                    query_types = list(queries.keys())
-                    query_texts = list(queries.values())
-                    logger.info(f"[{sid}] Processing {len(query_types)} queries: {query_types}")
-
-                    all_responses = []
-                    for i in range(0, len(query_texts), BATCH_SIZE):
-                        sub_queries = query_texts[i:i + BATCH_SIZE]
-                        tasks = [(image, q) for q in sub_queries]
-                        
-                        logger.info(f"[{sid}] Running inference batch {i//BATCH_SIZE + 1} ({len(sub_queries)} queries)")
-                        batch_responses = self.run_inference_batch(tasks, max_new_tokens=MAX_NEW_TOKENS)
-                        
-                        if batch_responses is None:
-                            logger.error(f"[{sid}] Batch inference returned None")
-                            batch_responses = ["[ERROR_NO_RESPONSE]"] * len(sub_queries)
-                        elif len(batch_responses) != len(sub_queries):
-                            logger.error(f"[{sid}] Response count mismatch: expected {len(sub_queries)}, got {len(batch_responses)}")
-                            batch_responses = batch_responses + ["[ERROR_MISSING_RESPONSE]"] * (len(sub_queries) - len(batch_responses))
-                        
-                        all_responses.extend(batch_responses)
-
-                    if len(all_responses) != len(query_types):
-                        logger.error(f"[{sid}] Total response mismatch: expected {len(query_types)}, got {len(all_responses)}")
-                        continue
-
-                    result = {
-                        "image_id": sid,
-                        "image_path": sample["image_path"],
-                        "safety_categories": sample.get("safety_categories", []),
-                        "responses": {}
+                empty_count = 0
+                for qtype, resp in zip(query_types, all_responses):
+                    if resp is None or (isinstance(resp, str) and not resp.strip()):
+                        logger.warning(f"[{sid}] Empty response for query: {qtype}")
+                        resp = "[EMPTY_RESPONSE]"
+                        empty_count += 1
+                    
+                    result["responses"][qtype] = {
+                        "query": queries[qtype],
+                        "response": resp
                     }
 
-                    empty_count = 0
-                    for qtype, resp in zip(query_types, all_responses):
-                        if resp is None or (isinstance(resp, str) and not resp.strip()):
-                            logger.warning(f"[{sid}] Empty response for query: {qtype}")
-                            resp = "[EMPTY_RESPONSE]"
-                            empty_count += 1
-                        
-                        result["responses"][qtype] = {
-                            "query": queries[qtype],
-                            "response": resp
-                        }
+                responses.append(result)
+                processed.add(sid)
+                logger.info(f"[{sid}] Success: {len(query_types)} queries, {empty_count} empty responses")
 
-                    all_results[sid] = result
-                    logger.info(f"[{sid}] Success: {len(query_types)} queries, {empty_count} empty responses")
+                # Save checkpoint periodically
+                if idx % SAVE_INTERVAL == 0:
+                    self.save_responses(responses)
+                    self.save_checkpoint(processed)
+                    logger.info(f"Checkpoint: {len(responses)} samples saved")
 
-                except Exception as e:
-                    logger.error(f"[{sample.get('image_id', 'UNKNOWN')}] Exception: {e}", exc_info=True)
+            except Exception as e:
+                logger.error(f"[{sample.get('image_id', 'UNKNOWN')}] Exception: {e}", exc_info=True)
 
             self.cleanup_memory()
 
-        # Save results
-        logger.info(f"Saving results for {len(all_results)} samples")
-        for sid, result in all_results.items():
-            responses.append(result)
-            processed.add(sid)
-
+        # Final save
         self.save_responses(responses)
         self.save_checkpoint(processed)
         

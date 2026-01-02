@@ -1,17 +1,9 @@
 import json
-import torch
 import logging
 from pathlib import Path
-from PIL import Image
-from transformers import AutoProcessor, AutoModel
 from tqdm import tqdm
-from config import IMAGE_EXTENSIONS, FILTER_MODEL_PATH
-
-try:
-    from transformers import Qwen3VLMoeForConditionalGeneration
-    QWEN3_AVAILABLE = True
-except ImportError:
-    QWEN3_AVAILABLE = False
+from config import IMAGE_EXTENSIONS
+from .base_vlm import BaseVLMStage
 
 logger = logging.getLogger(__name__)
 
@@ -110,52 +102,20 @@ Requirements:
 Rewritten question:"""
 
 
-class QueryGenerator:
-    def __init__(self, source_dir=None):
+class QueryGenerator(BaseVLMStage):
+    def __init__(self, source_dir=None, shared_model=None, shared_processor=None):
+        super().__init__(shared_model, shared_processor)
         from config import RESULTS_DIR, CRAWLED_DIR
+        
         self.source_dir = Path(source_dir) if source_dir else CRAWLED_DIR
         self.filtered_dir = self.source_dir / "filtered"
         self.unsafe_usable_dir = self.filtered_dir / "unsafe_usable"
         self.log_file = RESULTS_DIR / "filtering_log.jsonl"
         self.output_file = RESULTS_DIR / "benchmark_queries.json"
-        self.model = None
-        self.processor = None
 
-    def load_model(self):
-        model_path = Path(FILTER_MODEL_PATH)
-        if not model_path.exists():
-            raise FileNotFoundError(f"Model not found at: {FILTER_MODEL_PATH}")
-        logger.info(f"Loading model: {FILTER_MODEL_PATH}")
-
-        is_qwen3 = "qwen3" in FILTER_MODEL_PATH.lower()
-        if is_qwen3 and QWEN3_AVAILABLE:
-            self.model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
-                FILTER_MODEL_PATH,
-                torch_dtype=torch.bfloat16,
-                device_map="auto",
-                trust_remote_code=True
-            )
-        else:
-            self.model = AutoModel.from_pretrained(
-                FILTER_MODEL_PATH,
-                torch_dtype=torch.bfloat16,
-                device_map="auto",
-                trust_remote_code=True
-            )
-        self.processor = AutoProcessor.from_pretrained(
-            FILTER_MODEL_PATH, trust_remote_code=True
-        )
-        logger.info("Model loaded successfully")
-
-    def run_inference(self, image, prompt):
-        messages = [{"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": prompt}]}]
-        text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        inputs = self.processor(text=[text], images=[image], padding=True, return_tensors="pt").to(self.model.device)
-
-        with torch.no_grad():
-            generated_ids = self.model.generate(**inputs, max_new_tokens=256)
-            trimmed = [out[len(inp):] for inp, out in zip(inputs.input_ids, generated_ids)]
-            return self.processor.batch_decode(trimmed, skip_special_tokens=True)[0].strip()
+    def run_inference_single(self, image, prompt):
+        result = self.run_inference_batch([(image, prompt)], max_new_tokens=256)
+        return result[0] if result else ""
 
     def load_filtering_log(self):
         if not self.log_file.exists():
@@ -203,22 +163,22 @@ class QueryGenerator:
         return JAILBREAK_PREFIX + NAIVE_QUERY
 
     def generate_q3(self, image):
-        return self.run_inference(image, Q3_GENERATION_PROMPT)
+        return self.run_inference_single(image, Q3_GENERATION_PROMPT)
 
     def generate_q4(self, image, q3_query):
         prompt = Q4_GENERATION_PROMPT.format(original_query=q3_query)
-        return self.run_inference(image, prompt)
+        return self.run_inference_single(image, prompt)
 
     def generate_caption(self, image):
-        return self.run_inference(image, CAPTIONING_PROMPT)
+        return self.run_inference_single(image, CAPTIONING_PROMPT)
 
     def generate_q5(self, image, caption):
         prompt = Q5_GENERATION_PROMPT.format(caption=caption)
-        return self.run_inference(image, prompt)
+        return self.run_inference_single(image, prompt)
 
     def generate_q6(self, image, caption, q5_query):
         prompt = Q6_GENERATION_PROMPT.format(caption=caption, original_query=q5_query)
-        return self.run_inference(image, prompt)
+        return self.run_inference_single(image, prompt)
 
     def save_results(self, results):
         with open(self.output_file, "w", encoding="utf-8") as f:
@@ -238,7 +198,7 @@ class QueryGenerator:
 
         for idx, img_info in enumerate(tqdm(images, desc="Generating queries"), 1):
             try:
-                image = Image.open(img_info["path"]).convert("RGB")
+                image = self.load_image(Path(img_info["path"]))
                 
                 q1 = self.generate_q1()
                 q2 = self.generate_q2()
@@ -268,10 +228,12 @@ class QueryGenerator:
                 
                 if idx % save_interval == 0:
                     self.save_results(results)
-                    logger.info(f"Saved checkpoint: {len(results)} images")
+                    logger.info(f"Checkpoint: {len(results)} images")
+                    self.cleanup_memory()
                 
             except Exception as e:
                 logger.error(f"Error processing {img_info['filename']}: {e}")
+                self.save_results(results)  # Save progress before skipping
                 continue
 
         self.save_results(results)
