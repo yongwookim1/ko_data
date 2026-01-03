@@ -20,6 +20,10 @@ class MLLMEvaluator(BaseVLMStage):
     def __init__(self, shared_model=None, shared_processor=None):
         super().__init__(shared_model, shared_processor)
 
+    def run_inference_single(self, image, prompt):
+        result = self.run_inference_batch([(image, prompt)], max_new_tokens=MAX_NEW_TOKENS)
+        return result[0] if result else ""
+
     def load_checkpoint(self):
         if CHECKPOINT_FILE.exists():
             with open(CHECKPOINT_FILE) as f:
@@ -76,33 +80,18 @@ class MLLMEvaluator(BaseVLMStage):
                 query_types = list(queries.keys())
                 query_texts = list(queries.values())
                 
-                # Batch process all queries for this image
-                tasks = [(image, q) for q in query_texts]
-                
-                logger.info(f"[{sid}] Processing {len(query_types)} queries in batches of {BATCH_SIZE}")
+                logger.info(f"[{sid}] Processing {len(query_types)} queries")
                 
                 all_responses = []
-                for i in range(0, len(tasks), BATCH_SIZE):
-                    batch_tasks = tasks[i:i + BATCH_SIZE]
-                    batch_types = query_types[i:i + BATCH_SIZE]
-                    
-                    logger.info(f"[{sid}] Batch {i//BATCH_SIZE + 1}: {batch_types}")
-                    batch_responses = self.run_inference_batch(batch_tasks, max_new_tokens=MAX_NEW_TOKENS)
-                    
-                    if batch_responses is None:
-                        logger.error(f"[{sid}] Batch inference returned None")
-                        batch_responses = ["[ERROR_NO_RESPONSE]"] * len(batch_tasks)
-                    elif len(batch_responses) != len(batch_tasks):
-                        logger.error(f"[{sid}] Response mismatch: expected {len(batch_tasks)}, got {len(batch_responses)}")
-                        batch_responses = batch_responses + ["[ERROR_MISSING_RESPONSE]"] * (len(batch_tasks) - len(batch_responses))
-                    
-                    all_responses.extend(batch_responses)
+                for qtype, qtext in zip(query_types, query_texts):
+                    response = self.run_inference_single(image, qtext)
+                    all_responses.append(response)
+                    logger.info(f"[{sid}] Query {qtype}: {'OK' if response else 'EMPTY'}")
 
                 if len(all_responses) != len(query_types):
                     logger.warning(f"[{sid}] Response mismatch: expected {len(query_types)}, got {len(all_responses)}")
-                    # Pad with error markers instead of skipping
                     while len(all_responses) < len(query_types):
-                        all_responses.append("[ERROR_MISSING_RESPONSE]")
+                        all_responses.append("")
 
                 result = {
                     "image_id": sid,
@@ -113,9 +102,8 @@ class MLLMEvaluator(BaseVLMStage):
 
                 empty_count = 0
                 for qtype, resp in zip(query_types, all_responses):
-                    if resp is None or (isinstance(resp, str) and not resp.strip()):
+                    if not resp or not resp.strip():
                         logger.warning(f"[{sid}] Empty response for query: {qtype}")
-                        resp = "[EMPTY_RESPONSE]"
                         empty_count += 1
                     
                     result["responses"][qtype] = {
@@ -125,16 +113,18 @@ class MLLMEvaluator(BaseVLMStage):
 
                 responses.append(result)
                 processed.add(sid)
-                logger.info(f"[{sid}] Success: {len(query_types)} queries, {empty_count} empty responses")
+                logger.info(f"[{sid}] Success: {len(query_types)} queries, {empty_count} empty")
 
-                # Save checkpoint periodically
                 if idx % SAVE_INTERVAL == 0:
                     self.save_responses(responses)
                     self.save_checkpoint(processed)
                     logger.info(f"Checkpoint: {len(responses)} samples saved")
+                    self.cleanup_memory()
 
             except Exception as e:
                 logger.error(f"[{sample.get('image_id', 'UNKNOWN')}] Exception: {e}", exc_info=True)
+                self.save_responses(responses)
+                continue
 
             self.cleanup_memory()
 
