@@ -185,6 +185,10 @@ class QueryGenerator(BaseVLMStage):
             json.dump(results, f, ensure_ascii=False, indent=2)
 
     def run(self, save_interval=10):
+        if self.output_file.exists():
+            logger.info(f"Queries file already exists: {self.output_file}. Skipping query generation.")
+            return []
+        
         images = self.get_unsafe_usable_images()
         
         if not images:
