@@ -20,7 +20,6 @@ class PipelineRunner:
         self.skip_stages = skip_stages or []
         self.model_path = FILTER_MODEL_PATH
         self.shared_model = None
-        self.shared_processor = None
 
         self.stages = [
             ("filter", "Image Filtering", ImageFilter),
@@ -38,9 +37,6 @@ class PipelineRunner:
         if self.shared_model is not None:
             del self.shared_model
             self.shared_model = None
-        if self.shared_processor is not None:
-            del self.shared_processor
-            self.shared_processor = None
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         gc.collect()
@@ -51,15 +47,9 @@ class PipelineRunner:
 
         import os
         from pathlib import Path
-        from transformers import AutoProcessor, AutoModel
+        from vllm import LLM
 
         os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:512"
-
-        try:
-            from transformers import Qwen3VLMoeForConditionalGeneration
-            QWEN3_AVAILABLE = True
-        except ImportError:
-            QWEN3_AVAILABLE = False
 
         model_path = Path(self.model_path)
         if not model_path.exists():
@@ -69,45 +59,21 @@ class PipelineRunner:
             raise RuntimeError("GPU required")
 
         gpu_count = torch.cuda.device_count()
-        device_map = "auto" if gpu_count > 1 else {"": "cuda:0"}
-        logger.info(f"Loading model on {gpu_count} GPU(s): {self.model_path}")
+        logger.info(f"Loading vLLM model on {gpu_count} GPU(s): {self.model_path}")
 
-        is_qwen3 = "qwen3" in self.model_path.lower()
         try:
-            if is_qwen3 and QWEN3_AVAILABLE:
-                self.shared_model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
-                    self.model_path,
-                    torch_dtype=torch.bfloat16,
-                    device_map=device_map,
-                    trust_remote_code=True,
-                    low_cpu_mem_usage=True,
-                    attn_implementation="sdpa",
-                )
-            else:
-                self.shared_model = AutoModel.from_pretrained(
-                    self.model_path,
-                    torch_dtype=torch.bfloat16,
-                    device_map=device_map,
-                    trust_remote_code=True,
-                    low_cpu_mem_usage=True,
-                    attn_implementation="sdpa",
-                )
-        except Exception as e:
-            # Fallback to 8-bit quantization
-            logger.warning(f"bfloat16 failed, using 8-bit: {e}")
-            from transformers import BitsAndBytesConfig
-            self.shared_model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
-                self.model_path,
-                quantization_config=BitsAndBytesConfig(load_in_8bit=True),
-                device_map=device_map,
+            self.shared_model = LLM(
+                model=str(self.model_path),
                 trust_remote_code=True,
-                low_cpu_mem_usage=True,
+                dtype="bfloat16",
+                gpu_memory_utilization=0.9,
+                max_model_len=8192,
+                tensor_parallel_size=gpu_count if gpu_count > 1 else 1,
             )
-
-        self.shared_processor = AutoProcessor.from_pretrained(
-            self.model_path, trust_remote_code=True
-        )
-        logger.info("Model loaded")
+            logger.info("vLLM model loaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to load vLLM model: {e}")
+            raise
 
     def run_stage(self, stage_id, stage_name, stage_class):
         if stage_id in self.skip_stages:
@@ -118,10 +84,7 @@ class PipelineRunner:
 
         try:
             if stage_id in VLM_STAGES:
-                stage = stage_class(
-                    shared_model=self.shared_model,
-                    shared_processor=self.shared_processor
-                )
+                stage = stage_class(shared_model=self.shared_model)
             else:
                 stage = stage_class()
             stage.run()
