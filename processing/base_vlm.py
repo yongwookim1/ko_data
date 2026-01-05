@@ -69,29 +69,45 @@ class BaseVLMStage:
 
         images, prompts = zip(*image_prompt_pairs)
         
-        # Prepare messages in OpenAI-compatible format for vLLM
-        # Following vLLM documentation for chat interface
-        messages_list = []
+        # Prepare messages using processor's chat template
+        messages_batch = []
         for img, prompt in zip(images, prompts):
-            messages_list.append([
+            messages = [
                 {
                     "role": "user",
                     "content": [
-                        {"type": "image", "image": img},  # PIL Image object
+                        {"type": "image", "image": img},
                         {"type": "text", "text": prompt}
                     ]
                 }
-            ])
-
+            ]
+            messages_batch.append(messages)
+        
+        # Apply chat template to get formatted prompts
+        texts = []
+        for messages in messages_batch:
+            text = self.processor.apply_chat_template(
+                messages, 
+                tokenize=False, 
+                add_generation_prompt=True
+            )
+            texts.append(text)
+        
+        # Create inputs with multi-modal data for vLLM
+        inputs = []
+        for text, img in zip(texts, images):
+            inputs.append({
+                "prompt": text,
+                "multi_modal_data": {"image": img}
+            })
+        
         sampling_params = SamplingParams(
             temperature=0.0,
             max_tokens=max_new_tokens,
         )
 
         try:
-            # Use llm.chat() method as shown in vLLM documentation
-            # This method handles chat templates automatically
-            outputs = self.model.chat(messages_list, sampling_params=sampling_params)
+            outputs = self.model.generate(inputs, sampling_params=sampling_params)
             
             responses = []
             prefixes = ["Assistant:", "Description:", "Question:", "Rewritten question:",
@@ -117,52 +133,8 @@ class BaseVLMStage:
             
         except Exception as e:
             logger.error(f"vLLM inference error: {e}", exc_info=True)
-            # Fallback: Try with generate() method
-            try:
-                logger.info("Retrying with generate() method...")
-                return self._fallback_generate(image_prompt_pairs, max_new_tokens)
-            except Exception as e2:
-                logger.error(f"Fallback also failed: {e2}", exc_info=True)
-                return ["[ERROR_GENERATION_FAILED]"] * len(image_prompt_pairs)
+            return ["[ERROR_GENERATION_FAILED]"] * len(image_prompt_pairs)
     
-    def _fallback_generate(self, image_prompt_pairs, max_new_tokens=512):
-        """Fallback method using generate() if chat() fails."""
-        images, prompts = zip(*image_prompt_pairs)
-        
-        # Apply chat template manually using processor
-        messages_batch = [
-            [{"role": "user", "content": [{"type": "image", "image": img}, {"type": "text", "text": p}]}]
-            for img, p in zip(images, prompts)
-        ]
-        
-        texts = [
-            self.processor.apply_chat_template(m, tokenize=False, add_generation_prompt=True)
-            for m in messages_batch
-        ]
-        
-        # Create inputs with multi-modal data
-        inputs = []
-        for text, img in zip(texts, images):
-            inputs.append({
-                "prompt": text,
-                "multi_modal_data": {"image": img}
-            })
-        
-        sampling_params = SamplingParams(
-            temperature=0.0,
-            max_tokens=max_new_tokens,
-        )
-        
-        outputs = self.model.generate(inputs, sampling_params=sampling_params)
-        
-        responses = []
-        for output in outputs:
-            if output.outputs:
-                responses.append(output.outputs[0].text.strip())
-            else:
-                responses.append("[ERROR_GENERATION_FAILED]")
-        
-        return responses
 
     def parse_json(self, text, default=None):
         try:
