@@ -44,8 +44,8 @@ IMAGE_BATCH_SIZE = 40
 
 
 class ImageFilter(BaseVLMStage):
-    def __init__(self, source_dir=None, shared_model=None):
-        super().__init__(shared_model)
+    def __init__(self, source_dir=None, shared_model=None, shared_processor=None):
+        super().__init__(shared_model, shared_processor)
         self.source_dir = Path(source_dir) if source_dir else CRAWLED_DIR
         self.output_dir = self.source_dir / "filtered"
         self.safe_dir = self.output_dir / "safe"

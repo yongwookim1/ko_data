@@ -103,8 +103,8 @@ Rewritten question:"""
 
 
 class QueryGenerator(BaseVLMStage):
-    def __init__(self, source_dir=None, shared_model=None):
-        super().__init__(shared_model)
+    def __init__(self, source_dir=None, shared_model=None, shared_processor=None):
+        super().__init__(shared_model, shared_processor)
         from config import RESULTS_DIR, CRAWLED_DIR
         
         self.source_dir = Path(source_dir) if source_dir else CRAWLED_DIR

@@ -17,8 +17,8 @@ MAX_NEW_TOKENS = 2048
 
 
 class MLLMEvaluator(BaseVLMStage):
-    def __init__(self, shared_model=None):
-        super().__init__(shared_model)
+    def __init__(self, shared_model=None, shared_processor=None):
+        super().__init__(shared_model, shared_processor)
 
     def run_inference_single(self, image, prompt):
         result = self.run_inference_batch([(image, prompt)], max_new_tokens=MAX_NEW_TOKENS)
