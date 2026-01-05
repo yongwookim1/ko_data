@@ -11,7 +11,7 @@ QUERIES_FILE = RESULTS_DIR / "benchmark_queries.json"
 OUTPUT_FILE = RESULTS_DIR / "evaluation_responses.json"
 CHECKPOINT_FILE = RESULTS_DIR / "evaluation_checkpoint.json"
 
-BATCH_SIZE = 4
+QUERY_BATCH_SIZE = 2  # Process 2 queries at a time for same image (safe for VLM)
 SAVE_INTERVAL = 10
 MAX_NEW_TOKENS = 2048
 
@@ -82,11 +82,19 @@ class MLLMEvaluator(BaseVLMStage):
                 
                 logger.info(f"[{sid}] Processing {len(query_types)} queries")
                 
+                # Process queries in small batches to avoid VLM confusion with same image
                 all_responses = []
-                for qtype, qtext in zip(query_types, query_texts):
-                    response = self.run_inference_single(image, qtext)
-                    all_responses.append(response)
-                    logger.info(f"[{sid}] Query {qtype}: {'OK' if response else 'EMPTY'}")
+                for i in range(0, len(query_texts), QUERY_BATCH_SIZE):
+                    batch_queries = query_texts[i:i + QUERY_BATCH_SIZE]
+                    batch_types = query_types[i:i + QUERY_BATCH_SIZE]
+                    
+                    # Create separate image copies for each query in batch
+                    tasks = [(image.copy(), qtext) for qtext in batch_queries]
+                    batch_responses = self.run_inference_batch(tasks, max_new_tokens=MAX_NEW_TOKENS)
+                    all_responses.extend(batch_responses)
+                    
+                    for qtype, response in zip(batch_types, batch_responses):
+                        logger.info(f"[{sid}] Query {qtype}: {'OK' if response else 'EMPTY'}")
 
                 if len(all_responses) != len(query_types):
                     logger.warning(f"[{sid}] Response mismatch: expected {len(query_types)}, got {len(all_responses)}")
