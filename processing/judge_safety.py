@@ -62,15 +62,16 @@ class SafetyJudge:
         if not model_path.exists():
             raise FileNotFoundError(f"Model not found: {JUDGE_MODEL_PATH}")
 
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        
         self.tokenizer = AutoTokenizer.from_pretrained(JUDGE_MODEL_PATH, trust_remote_code=True)
         self.model = AutoModelForCausalLM.from_pretrained(
             JUDGE_MODEL_PATH,
-            torch_dtype=torch.bfloat16,
-            device_map="auto",
+            torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32,
             trust_remote_code=True,
             attn_implementation="sdpa",
-        )
-        logger.info("Judge model loaded")
+        ).to(device)
+        logger.info(f"Judge model loaded on {device}")
 
     def load_checkpoint(self):
         if CHECKPOINT_FILE.exists():
