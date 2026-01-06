@@ -6,6 +6,7 @@ BASE_DIR = Path(__file__).parent
 IMAGE_DIR = BASE_DIR / "images"
 CRAWLED_DIR = IMAGE_DIR / "crawled_images"
 RESULTS_DIR = BASE_DIR / "results"  # Results directory for processed data
+TOPIC_RESULTS_DIR = BASE_DIR / "results_topic"  # Results for topic-based pipeline
 DATA_DIR = BASE_DIR / "data"
 METADATA_FILE = CRAWLED_DIR / "metadata.json"
 TITLES_CACHE = DATA_DIR / "controversy_titles.json"
@@ -13,6 +14,7 @@ TITLES_CACHE = DATA_DIR / "controversy_titles.json"
 # Create directories
 IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+TOPIC_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # Crawler settings
