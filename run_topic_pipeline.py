@@ -177,15 +177,14 @@ class TopicMLLMEvaluator:
 
 class TopicSafetyJudge:
     def __init__(self, results_dir):
-        from processing.judge_safety import SafetyJudge
+        from processing.judge_safety_vllm import SafetyJudge
         
         self.base_judge = SafetyJudge.__new__(SafetyJudge)
         self.base_judge.model = None
-        self.base_judge.tokenizer = None
         
         results_path = Path(results_dir)
         
-        import processing.judge_safety as judge_module
+        import processing.judge_safety_vllm as judge_module
         self.orig_responses = judge_module.RESPONSES_FILE
         self.orig_output = judge_module.OUTPUT_FILE
         self.orig_checkpoint = judge_module.CHECKPOINT_FILE
@@ -198,7 +197,7 @@ class TopicSafetyJudge:
     
     def __del__(self):
         try:
-            import processing.judge_safety as judge_module
+            import processing.judge_safety_vllm as judge_module
             judge_module.RESPONSES_FILE = self.orig_responses
             judge_module.OUTPUT_FILE = self.orig_output
             judge_module.CHECKPOINT_FILE = self.orig_checkpoint
@@ -332,7 +331,10 @@ class TopicPipelineRunner:
             logger.info(f"Completed: {stage_name}")
             
             if stage_id == "evaluate":
+                logger.info("Unloading VLM model before judge stage...")
                 self.unload_shared_model()
+                import time
+                time.sleep(3)  # Brief wait for GPU memory cleanup
             return True
         
         except KeyboardInterrupt:
