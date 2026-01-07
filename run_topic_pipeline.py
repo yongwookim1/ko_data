@@ -380,7 +380,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--source_dir",
-        default="/home/kyw1654/ko_data/images/topic_images",
+        default="./images/topic_images",
         help="Directory containing topic-labeled images"
     )
     parser.add_argument(
