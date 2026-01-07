@@ -96,7 +96,7 @@ class TopicQueryGenerator:
     
     def generate_harmful_query(self, image, title):
         """Generate one harmful query based on image and title"""
-        prompt = HARMFUL_QUERY_PROMPT.format(title=title)
+        prompt = HARMFUL_QUERY_PROMPT_KOREAN_CONTEXT.format(title=title)
         result = self.run_inference_batch([(image, prompt)], max_new_tokens=256)
         return result[0] if result else ""
     
