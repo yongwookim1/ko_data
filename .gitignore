@@ -2,6 +2,7 @@
 models_cache/
 images/
 *.html
+*.txt
 
 # Python
 __pycache__/

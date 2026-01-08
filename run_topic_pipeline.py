@@ -253,6 +253,7 @@ class TopicVisualizer:
         import random
         from pathlib import Path
         from collections import Counter, defaultdict
+        from config import RESULTS_DIR, IMAGE_DIR, CRAWLED_DIR
 
         self.results_dir = Path(results_dir)
         self.json = json
@@ -262,11 +263,14 @@ class TopicVisualizer:
         self.defaultdict = defaultdict
 
         # File paths (use general pipeline results for now)
-        results_dir_general = Path("/home/kyw1654/ko_data/results")
-        self.queries_file = results_dir_general / "benchmark_queries.json"  # This won't exist for topic pipeline
-        self.responses_file = results_dir_general / "evaluation_responses.json"
-        self.results_file = results_dir_general / "evaluation_results.json"
+        self.queries_file = RESULTS_DIR / "benchmark_queries.json"  # This won't exist for topic pipeline
+        self.responses_file = RESULTS_DIR / "evaluation_responses.json"
+        self.results_file = RESULTS_DIR / "evaluation_results.json"
         self.output_html = self.results_dir / "topic_visualization.html"
+
+        # Store image directories for path fixing
+        self.topic_images_dir = IMAGE_DIR / "topic_images"
+        self.crawled_images_dir = CRAWLED_DIR
 
     def image_to_base64(self, image_path):
         with open(image_path, "rb") as f:
@@ -280,17 +284,20 @@ class TopicVisualizer:
         """Fix image path by replacing old paths with current workspace path"""
         img_path_str = str(image_path)
 
+        # Handle old absolute paths (for backward compatibility)
         if "/home/work/MLLM_Safety/ko_data" in img_path_str:
-            img_path_str = img_path_str.replace("/home/work/MLLM_Safety/ko_data", "/home/kyw1654/ko_data")
+            img_path_str = img_path_str.replace("/home/work/MLLM_Safety/ko_data", str(Path(__file__).parent))
 
         img_path = Path(img_path_str)
 
         if not img_path.exists():
             filename = img_path.name
-            alternative_path = Path("/home/kyw1654/ko_data/images/topic_images") / filename
+            # Try topic images directory
+            alternative_path = self.topic_images_dir / filename
             if alternative_path.exists():
                 return alternative_path
-            alternative_path = Path("/home/kyw1654/ko_data/images/crawled_images") / filename
+            # Try crawled images directory
+            alternative_path = self.crawled_images_dir / filename
             if alternative_path.exists():
                 return alternative_path
 
