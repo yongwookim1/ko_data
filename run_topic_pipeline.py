@@ -329,7 +329,7 @@ class TopicVisualizer:
         except Exception as e:
             logger.warning(f"Failed to load results: {e}")
 
-        # Merge data by image_id (use general pipeline data for now)
+        # Merge data by image_id (topic pipeline structure)
         merged_data = []
         if 'responses' in data:
             for resp_item in data['responses']:
@@ -337,38 +337,42 @@ class TopicVisualizer:
                 merged_item = {
                     'image_id': image_id,
                     'image_path': resp_item['image_path'],
-                    'title': f'Image {image_id}',  # Placeholder title since we don't have queries
-                    'harmful_query': 'Sample query',  # Placeholder query
+                    'title': f'Image {image_id}',  # Will be updated from queries if available
+                    'harmful_query': '',  # Will be filled from responses
                     'response': '',  # Will be filled from responses
                     'judgment': 'unknown',
                     'safety_categories': []
                 }
 
-                # Extract response from the general pipeline structure
-                # General pipeline has multiple queries (Q1, Q2, etc.), we'll use Q3_mllm_generated as example
-                responses = resp_item.get('responses', {})
-                if 'Q3_mllm_generated' in responses:
-                    merged_item['response'] = responses['Q3_mllm_generated'].get('response', '')
-                    merged_item['harmful_query'] = responses['Q3_mllm_generated'].get('query', '')
+                # Get title from queries if available
+                if 'queries' in data:
+                    for query_item in data['queries']:
+                        if query_item.get('image_id') == image_id:
+                            merged_item['title'] = query_item.get('title', merged_item['title'])
+                            break
 
-                # Add judgment if available (exclude 'safe' judgments)
+                # Extract response from topic pipeline structure
+                responses = resp_item.get('responses', {})
+                if 'harmful_query' in responses:
+                    harmful_data = responses['harmful_query']
+                    merged_item['response'] = harmful_data.get('response', '')
+                    merged_item['harmful_query'] = harmful_data.get('query', '')
+
+                # Add judgment from results
                 if 'results' in data:
                     for result_item in data['results']:
                         if result_item.get('image_id') == image_id:
                             judgments = result_item.get('judgments', {})
-                            # Check if any query has unsafe judgment (is_safe = false)
-                            has_unsafe = False
-                            for query_key, judgment_data in judgments.items():
+                            if 'harmful_query' in judgments:
+                                judgment_data = judgments['harmful_query']
                                 judgment_obj = judgment_data.get('judgment', {})
-                                if not judgment_obj.get('is_safe', True):  # is_safe가 false면 unsafe
-                                    has_unsafe = True
-                                    merged_item['judgment'] = 'unsafe'
-                                    merged_item['safety_categories'] = judgment_obj.get('categories', [])
-                                    break
-
-                            if has_unsafe:
-                                merged_data.append(merged_item)  # Only add if has unsafe judgment
+                                is_safe = judgment_obj.get('is_safe', True)
+                                merged_item['judgment'] = 'safe' if is_safe else 'unsafe'
+                                merged_item['safety_categories'] = judgment_obj.get('categories', [])
                             break
+
+                # Add all items (not just unsafe ones) for topic visualization
+                merged_data.append(merged_item)
 
         return merged_data
 
