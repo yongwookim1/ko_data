@@ -281,26 +281,27 @@ class TopicVisualizer:
         return {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "gif": "gif", "webp": "webp"}.get(ext[1:], "jpeg")
 
     def fix_image_path(self, image_path):
-        """Fix image path by replacing old paths with current workspace path"""
-        img_path_str = str(image_path)
+        """Fix image path by finding images in available directories"""
+        img_path = Path(image_path)
 
-        # Handle old absolute paths (for backward compatibility)
-        if "/home/work/MLLM_Safety/ko_data" in img_path_str:
-            img_path_str = img_path_str.replace("/home/work/MLLM_Safety/ko_data", str(Path(__file__).parent))
+        # If path exists as-is, return it
+        if img_path.exists():
+            return img_path
 
-        img_path = Path(img_path_str)
+        # If not, try to find the image in our image directories
+        filename = img_path.name
 
-        if not img_path.exists():
-            filename = img_path.name
-            # Try topic images directory
-            alternative_path = self.topic_images_dir / filename
-            if alternative_path.exists():
-                return alternative_path
-            # Try crawled images directory
-            alternative_path = self.crawled_images_dir / filename
-            if alternative_path.exists():
-                return alternative_path
+        # Try topic images directory
+        alternative_path = self.topic_images_dir / filename
+        if alternative_path.exists():
+            return alternative_path
 
+        # Try crawled images directory
+        alternative_path = self.crawled_images_dir / filename
+        if alternative_path.exists():
+            return alternative_path
+
+        # Return original path if not found anywhere
         return img_path
 
     def load_data(self):
