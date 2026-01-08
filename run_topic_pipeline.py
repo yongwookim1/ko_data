@@ -262,10 +262,10 @@ class TopicVisualizer:
         self.Counter = Counter
         self.defaultdict = defaultdict
 
-        # File paths (use general pipeline results for now)
-        self.queries_file = RESULTS_DIR / "benchmark_queries.json"  # This won't exist for topic pipeline
-        self.responses_file = RESULTS_DIR / "evaluation_responses.json"
-        self.results_file = RESULTS_DIR / "evaluation_results.json"
+        # File paths (use topic pipeline results)
+        self.queries_file = self.results_dir / "benchmark_queries.json"
+        self.responses_file = self.results_dir / "evaluation_responses.json"
+        self.results_file = self.results_dir / "evaluation_results.json"
         self.output_html = self.results_dir / "topic_visualization.html"
 
         # Store image directories for path fixing
