@@ -444,7 +444,7 @@ def main():
         # 실행 시간 출력
         end_time = time.time()
         duration = end_time - start_time
-        print(".2f"
+        print(".2f")
         print("✅ All processing completed successfully!")
         print(f"📁 Results saved in: results_topic/")
 
