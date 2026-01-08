@@ -245,6 +245,236 @@ class TopicResultsAnalyzer:
             pass
 
 
+class TopicVisualizer:
+    def __init__(self, results_dir):
+        import json
+        import base64
+        import random
+        from pathlib import Path
+        from collections import Counter, defaultdict
+
+        self.results_dir = Path(results_dir)
+        self.json = json
+        self.base64 = base64
+        self.random = random
+        self.Counter = Counter
+        self.defaultdict = defaultdict
+
+        # File paths
+        self.queries_file = self.results_dir / "benchmark_queries.json"
+        self.responses_file = self.results_dir / "evaluation_responses.json"
+        self.results_file = self.results_dir / "evaluation_results.json"
+        self.output_html = self.results_dir / "topic_visualization.html"
+
+    def image_to_base64(self, image_path):
+        with open(image_path, "rb") as f:
+            return self.base64.b64encode(f.read()).decode("utf-8")
+
+    def get_mime(self, path):
+        ext = Path(path).suffix.lower()
+        return {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "gif": "gif", "webp": "webp"}.get(ext[1:], "jpeg")
+
+    def fix_image_path(self, image_path):
+        """Fix image path by replacing old paths with current workspace path"""
+        img_path_str = str(image_path)
+
+        if "/home/work/MLLM_Safety/ko_data" in img_path_str:
+            img_path_str = img_path_str.replace("/home/work/MLLM_Safety/ko_data", "/home/kyw1654/ko_data")
+
+        img_path = Path(img_path_str)
+
+        if not img_path.exists():
+            filename = img_path.name
+            alternative_path = Path("/home/kyw1654/ko_data/images/topic_images") / filename
+            if alternative_path.exists():
+                return alternative_path
+            alternative_path = Path("/home/kyw1654/ko_data/images/crawled_images") / filename
+            if alternative_path.exists():
+                return alternative_path
+
+        return img_path
+
+    def load_data(self):
+        """Load all result files and merge them"""
+        data = {}
+
+        try:
+            if self.queries_file.exists():
+                with open(self.queries_file, 'r', encoding='utf-8') as f:
+                    data['queries'] = self.json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to load queries: {e}")
+
+        try:
+            if self.responses_file.exists():
+                with open(self.responses_file, 'r', encoding='utf-8') as f:
+                    data['responses'] = self.json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to load responses: {e}")
+
+        try:
+            if self.results_file.exists():
+                with open(self.results_file, 'r', encoding='utf-8') as f:
+                    data['results'] = self.json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to load results: {e}")
+
+        # Merge data by image_id
+        merged_data = []
+        if 'queries' in data:
+            for query_item in data['queries']:
+                image_id = query_item['image_id']
+                merged_item = {
+                    'image_id': image_id,
+                    'image_path': query_item['image_path'],
+                    'title': query_item['title'],
+                    'harmful_query': query_item['queries']['harmful_query']
+                }
+
+                # Add response if available
+                if 'responses' in data:
+                    for resp_item in data['responses']:
+                        if resp_item.get('image_id') == image_id:
+                            merged_item['response'] = resp_item.get('response', '')
+                            break
+
+                # Add judgment if available
+                if 'results' in data:
+                    for result_item in data['results']:
+                        if result_item.get('image_id') == image_id:
+                            merged_item['judgment'] = result_item.get('judgment', 'unknown')
+                            merged_item['safety_categories'] = result_item.get('safety_categories', [])
+                            break
+
+                merged_data.append(merged_item)
+
+        return merged_data
+
+    def generate_html(self, samples, output_path):
+        html = """<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>Topic-based Response Review ({count} samples)</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; max-width: 1600px; margin: 0 auto; padding: 20px; background: #f5f5f5; }}
+        h1 {{ border-bottom: 2px solid #333; padding-bottom: 10px; }}
+        .sample {{ border: 1px solid #ddd; padding: 20px; margin-bottom: 40px; background: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+        .header {{ display: flex; gap: 10px; margin-bottom: 15px; font-size: 14px; color: #666; }}
+        .category {{ background: #f0f0f0; padding: 2px 8px; border-radius: 3px; }}
+        .content {{ display: flex; gap: 20px; margin-bottom: 20px; }}
+        .image-box img {{ max-width: 400px; max-height: 300px; object-fit: contain; border: 1px solid #ddd; }}
+        .responses {{ flex: 1; }}
+        .response-item {{ margin-bottom: 25px; padding: 15px; background: #f9f9f9; border-left: 4px solid #333; }}
+        .query-label {{ font-weight: bold; font-size: 13px; color: #0066cc; margin-bottom: 8px; }}
+        .query-text {{ font-size: 13px; background: #e8f4fd; padding: 10px; margin-bottom: 10px; border-radius: 4px; white-space: pre-wrap; }}
+        .response-label {{ font-weight: bold; font-size: 13px; color: #009900; margin-bottom: 8px; }}
+        .response-text {{ font-size: 13px; line-height: 1.6; white-space: pre-wrap; max-height: 400px; overflow-y: auto; margin-bottom: 10px; }}
+        .judgment {{ background: #fff3cd; border: 1px solid #ffc107; padding: 10px; margin-top: 10px; border-radius: 4px; }}
+        .judgment-safe {{ background: #d4edda; border-color: #28a745; }}
+        .judgment-unsafe {{ background: #f8d7da; border-color: #dc3545; }}
+        .judgment-header {{ font-weight: bold; font-size: 13px; margin-bottom: 5px; }}
+        .judgment-details {{ font-size: 12px; color: #555; }}
+        .badge {{ display: inline-block; padding: 3px 8px; border-radius: 3px; font-size: 11px; font-weight: bold; margin-right: 5px; }}
+        .badge-safe {{ background: #28a745; color: white; }}
+        .badge-unsafe {{ background: #dc3545; color: white; }}
+        .badge-category {{ background: #6c757d; color: white; }}
+        .collapsible {{ cursor: pointer; user-select: none; }}
+        .collapsible:hover {{ background: #e0e0e0; }}
+        .collapsed {{ max-height: 100px; overflow: hidden; position: relative; }}
+        .collapsed::after {{ content: '... (click to expand)'; display: block; text-align: center; background: linear-gradient(transparent, #f9f9f9); padding-top: 20px; }}
+        .title-box {{ background: #f8f9fa; padding: 10px; margin-bottom: 15px; border-radius: 4px; border-left: 4px solid #007bff; }}
+        .title-label {{ font-weight: bold; color: #007bff; margin-bottom: 5px; }}
+    </style>
+    <script>
+        function toggleCollapse(elem) {{
+            elem.classList.toggle('collapsed');
+        }}
+    </script>
+</head>
+<body>
+    <h1>Topic-based Response Review ({count} samples)</h1>
+    {samples_html}
+</body>
+</html>"""
+
+        samples_html = ""
+        for idx, s in enumerate(samples, 1):
+            try:
+                img_path = self.fix_image_path(s["image_path"])
+                if not img_path.exists():
+                    logger.warning(f"Image not found: {img_path}")
+                    img_b64, mime = "", "jpeg"
+                else:
+                    img_b64 = self.image_to_base64(img_path)
+                    mime = self.get_mime(img_path)
+            except Exception as e:
+                logger.error(f"Error loading image for sample {idx}: {e}")
+                img_b64, mime = "", "jpeg"
+
+            cats = " ".join(f'<span class="category">{c}</span>' for c in s.get("safety_categories", []))
+
+            # Build judgment HTML
+            judgment = s.get('judgment', 'unknown')
+            is_safe = judgment == 'safe'
+            judgment_class = "judgment-safe" if is_safe else "judgment-unsafe"
+            safety_badge = f'<span class="badge badge-safe">SAFE</span>' if is_safe else f'<span class="badge badge-unsafe">UNSAFE</span>'
+
+            judgment_html = f"""
+                <div class="judgment {judgment_class}">
+                    <div class="judgment-header">
+                        Judge: {safety_badge} ({judgment})
+                    </div>
+                </div>"""
+
+            is_long = len(s.get('response', '')) > 500
+            collapse_class = "collapsed" if is_long else ""
+
+            samples_html += f"""
+    <div class="sample">
+        <div class="header"><strong>#{idx}</strong> | {s.get('image_id', 'N/A')} | {cats}</div>
+        <div class="title-box">
+            <div class="title-label">Topic Title:</div>
+            <div>{s.get('title', 'N/A')}</div>
+        </div>
+        <div class="content">
+            <div class="image-box"><img src="data:image/{mime};base64,{img_b64}" alt="{idx}"></div>
+            <div class="responses">
+                <div class="response-item">
+                    <div class="query-label">Harmful Query:</div>
+                    <div class="query-text">{s.get('harmful_query', 'N/A')}</div>
+                    <div class="response-label">MLLM Response:</div>
+                    <div class="response-text {collapse_class} collapsible" onclick="toggleCollapse(this)">{s.get('response', 'N/A')}</div>
+                    {judgment_html}
+                </div>
+            </div>
+        </div>
+    </div>"""
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(html.format(count=len(samples), samples_html=samples_html))
+        return output_path
+
+    def run(self, n_samples=50, seed=42):
+        """Run visualization"""
+        logger.info("Loading data for topic visualization...")
+
+        data = self.load_data()
+
+        if not data:
+            logger.warning("No data found for visualization")
+            return
+
+        self.random.seed(seed)
+        samples = self.random.sample(data, min(n_samples, len(data)))
+
+        output_path = self.generate_html(samples, self.output_html)
+        logger.info(f"Generated topic visualization with {len(samples)} samples: {output_path}")
+        print(f"✓ Saved: {output_path}")
+        print(f"  Total samples: {len(data)}")
+        print(f"  Visualized: {len(samples)}")
+
+
 class TopicPipelineRunner:
     def __init__(self, source_dir, skip_stages=None):
         from config import FILTER_MODEL_PATH, TOPIC_RESULTS_DIR
@@ -272,6 +502,9 @@ class TopicPipelineRunner:
                 results_dir=str(self.results_dir)
             )),
             ("analyze", "Results Analysis", lambda: TopicResultsAnalyzer(
+                results_dir=str(self.results_dir)
+            )),
+            ("visualize", "Visualization", lambda: TopicVisualizer(
                 results_dir=str(self.results_dir)
             )),
         ]
@@ -385,7 +618,16 @@ def main():
     )
     parser.add_argument(
         "--skip", nargs="+",
-        choices=["queries", "evaluate", "judge", "analyze"],
+        choices=["queries", "evaluate", "judge", "analyze", "visualize"],
+    )
+    parser.add_argument(
+        "--visualize-only",
+        action="store_true",
+        help="Run only visualization on existing results"
+    )
+    parser.add_argument(
+        "-n", type=int, default=50,
+        help="Number of samples to visualize (default: 50)"
     )
     args = parser.parse_args()
     
@@ -395,10 +637,17 @@ def main():
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     
-    TopicPipelineRunner(
-        source_dir=args.source_dir,
-        skip_stages=args.skip or []
-    ).run()
+    if args.visualize_only:
+        # Run only visualization
+        from config import TOPIC_RESULTS_DIR
+        visualizer = TopicVisualizer(results_dir=TOPIC_RESULTS_DIR)
+        visualizer.run(n_samples=args.n)
+    else:
+        # Run full pipeline or skip specified stages
+        TopicPipelineRunner(
+            source_dir=args.source_dir,
+            skip_stages=args.skip or []
+        ).run()
 
 
 if __name__ == "__main__":
