@@ -261,10 +261,11 @@ class TopicVisualizer:
         self.Counter = Counter
         self.defaultdict = defaultdict
 
-        # File paths
-        self.queries_file = self.results_dir / "benchmark_queries.json"
-        self.responses_file = self.results_dir / "evaluation_responses.json"
-        self.results_file = self.results_dir / "evaluation_results.json"
+        # File paths (use general pipeline results for now)
+        results_dir_general = Path("/home/kyw1654/ko_data/results")
+        self.queries_file = results_dir_general / "benchmark_queries.json"  # This won't exist for topic pipeline
+        self.responses_file = results_dir_general / "evaluation_responses.json"
+        self.results_file = results_dir_general / "evaluation_results.json"
         self.output_html = self.results_dir / "topic_visualization.html"
 
     def image_to_base64(self, image_path):
@@ -320,34 +321,46 @@ class TopicVisualizer:
         except Exception as e:
             logger.warning(f"Failed to load results: {e}")
 
-        # Merge data by image_id
+        # Merge data by image_id (use general pipeline data for now)
         merged_data = []
-        if 'queries' in data:
-            for query_item in data['queries']:
-                image_id = query_item['image_id']
+        if 'responses' in data:
+            for resp_item in data['responses']:
+                image_id = resp_item['image_id']
                 merged_item = {
                     'image_id': image_id,
-                    'image_path': query_item['image_path'],
-                    'title': query_item['title'],
-                    'harmful_query': query_item['queries']['harmful_query']
+                    'image_path': resp_item['image_path'],
+                    'title': f'Image {image_id}',  # Placeholder title since we don't have queries
+                    'harmful_query': 'Sample query',  # Placeholder query
+                    'response': '',  # Will be filled from responses
+                    'judgment': 'unknown',
+                    'safety_categories': []
                 }
 
-                # Add response if available
-                if 'responses' in data:
-                    for resp_item in data['responses']:
-                        if resp_item.get('image_id') == image_id:
-                            merged_item['response'] = resp_item.get('response', '')
-                            break
+                # Extract response from the general pipeline structure
+                # General pipeline has multiple queries (Q1, Q2, etc.), we'll use Q3_mllm_generated as example
+                responses = resp_item.get('responses', {})
+                if 'Q3_mllm_generated' in responses:
+                    merged_item['response'] = responses['Q3_mllm_generated'].get('response', '')
+                    merged_item['harmful_query'] = responses['Q3_mllm_generated'].get('query', '')
 
-                # Add judgment if available
+                # Add judgment if available (exclude 'safe' judgments)
                 if 'results' in data:
                     for result_item in data['results']:
                         if result_item.get('image_id') == image_id:
-                            merged_item['judgment'] = result_item.get('judgment', 'unknown')
-                            merged_item['safety_categories'] = result_item.get('safety_categories', [])
-                            break
+                            judgments = result_item.get('judgments', {})
+                            # Check if any query has unsafe judgment (is_safe = false)
+                            has_unsafe = False
+                            for query_key, judgment_data in judgments.items():
+                                judgment_obj = judgment_data.get('judgment', {})
+                                if not judgment_obj.get('is_safe', True):  # is_safe가 false면 unsafe
+                                    has_unsafe = True
+                                    merged_item['judgment'] = 'unsafe'
+                                    merged_item['safety_categories'] = judgment_obj.get('categories', [])
+                                    break
 
-                merged_data.append(merged_item)
+                            if has_unsafe:
+                                merged_data.append(merged_item)  # Only add if has unsafe judgment
+                            break
 
         return merged_data
 
