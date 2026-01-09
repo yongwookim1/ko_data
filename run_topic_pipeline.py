@@ -264,7 +264,6 @@ class TopicVisualizer:
 
         # File paths (use topic pipeline results)
         self.queries_file = self.results_dir / "benchmark_queries.json"
-        self.responses_file = self.results_dir / "evaluation_responses.json"
         self.results_file = self.results_dir / "evaluation_results.json"
         self.output_html = self.results_dir / "topic_visualization.html"
 
@@ -305,7 +304,7 @@ class TopicVisualizer:
         return img_path
 
     def load_data(self):
-        """Load all result files and merge them"""
+        """Load results and queries files and merge them"""
         data = {}
 
         try:
@@ -316,63 +315,50 @@ class TopicVisualizer:
             logger.warning(f"Failed to load queries: {e}")
 
         try:
-            if self.responses_file.exists():
-                with open(self.responses_file, 'r', encoding='utf-8') as f:
-                    data['responses'] = self.json.load(f)
-        except Exception as e:
-            logger.warning(f"Failed to load responses: {e}")
-
-        try:
             if self.results_file.exists():
                 with open(self.results_file, 'r', encoding='utf-8') as f:
                     data['results'] = self.json.load(f)
         except Exception as e:
             logger.warning(f"Failed to load results: {e}")
 
-        # Merge data by image_id (topic pipeline structure)
         merged_data = []
-        if 'responses' in data:
-            for resp_item in data['responses']:
-                image_id = resp_item['image_id']
-                merged_item = {
-                    'image_id': image_id,
-                    'image_path': resp_item['image_path'],
-                    'title': f'Image {image_id}',  # Will be updated from queries if available
-                    'harmful_query': '',  # Will be filled from responses
-                    'response': '',  # Will be filled from responses
-                    'judgment': 'unknown',
-                    'safety_categories': []
-                }
+        if 'results' not in data:
+            logger.warning("No results data found")
+            return merged_data
 
-                # Get title from queries if available
-                if 'queries' in data:
-                    for query_item in data['queries']:
-                        if query_item.get('image_id') == image_id:
-                            merged_item['title'] = query_item.get('title', merged_item['title'])
-                            break
+        # Use results as main data source
+        for result_item in data['results']:
+            image_id = result_item['image_id']
+            merged_item = {
+                'image_id': image_id,
+                'image_path': result_item['image_path'],
+                'title': image_id,
+                'harmful_query': '',
+                'response': '',
+                'judgment': 'unknown',
+                'safety_categories': result_item.get('safety_categories', [])
+            }
 
-                # Extract response from topic pipeline structure
-                responses = resp_item.get('responses', {})
-                if 'harmful_query' in responses:
-                    harmful_data = responses['harmful_query']
-                    merged_item['response'] = harmful_data.get('response', '')
-                    merged_item['harmful_query'] = harmful_data.get('query', '')
+            # Get title from queries if available
+            if 'queries' in data:
+                for query_item in data['queries']:
+                    if query_item.get('image_id') == image_id:
+                        merged_item['title'] = query_item.get('title', image_id)
+                        break
 
-                # Add judgment from results
-                if 'results' in data:
-                    for result_item in data['results']:
-                        if result_item.get('image_id') == image_id:
-                            judgments = result_item.get('judgments', {})
-                            if 'harmful_query' in judgments:
-                                judgment_data = judgments['harmful_query']
-                                judgment_obj = judgment_data.get('judgment', {})
-                                is_safe = judgment_obj.get('is_safe', True)
-                                merged_item['judgment'] = 'safe' if is_safe else 'unsafe'
-                                merged_item['safety_categories'] = judgment_obj.get('categories', [])
-                            break
+            # Extract query, response, and judgment from results
+            judgments = result_item.get('judgments', {})
+            if 'harmful_query' in judgments:
+                judgment_data = judgments['harmful_query']
+                merged_item['harmful_query'] = judgment_data.get('query', '')
+                merged_item['response'] = judgment_data.get('response', '')
+                
+                judgment_obj = judgment_data.get('judgment', {})
+                is_safe = judgment_obj.get('is_safe', True)
+                merged_item['judgment'] = 'safe' if is_safe else 'unsafe'
+                merged_item['safety_categories'] = judgment_obj.get('categories', [])
 
-                # Add all items (not just unsafe ones) for topic visualization
-                merged_data.append(merged_item)
+            merged_data.append(merged_item)
 
         return merged_data
 
@@ -492,13 +478,17 @@ class TopicVisualizer:
             return
 
         self.random.seed(seed)
-        samples = self.random.sample(data, min(n_samples, len(data)))
+        actual_samples = min(n_samples, len(data))
+        samples = self.random.sample(data, actual_samples)
 
         output_path = self.generate_html(samples, self.output_html)
         logger.info(f"Generated topic visualization with {len(samples)} samples: {output_path}")
         print(f"✓ Saved: {output_path}")
         print(f"  Total samples: {len(data)}")
+        print(f"  Requested: {n_samples}")
         print(f"  Visualized: {len(samples)}")
+        if len(data) < n_samples:
+            print(f"  ⚠ Only {len(data)} samples available (less than requested {n_samples})")
 
 
 class TopicPipelineRunner:
