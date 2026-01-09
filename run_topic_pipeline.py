@@ -642,7 +642,7 @@ def main():
         help="Run only visualization on existing results"
     )
     parser.add_argument(
-        "-n", type=int, default=50,
+        "--n", type=int, default=50,
         help="Number of samples to visualize (default: 50)"
     )
     args = parser.parse_args()
